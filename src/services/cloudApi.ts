@@ -1,3 +1,27 @@
+/**
+ * @file src/services/cloudApi.ts
+ * @license GPL-3.0-or-later
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * ============================================================================
+ * ICON SYNC — CLOUD VAULT API CLIENT, LOCAL CACHE & SAFE FILE EXPORTERS
+ * ============================================================================
+ *
+ * PLAIN-ENGLISH OVERVIEW (for beginners & AI readers):
+ * This module handles all communication between the browser UI and:
+ *   1. The local Express Cloud Vault server (`/api/vault`, `/api/backups`, `/api/diagnostics`).
+ *   2. The browser's offline cache (`localStorage["iconsync.vault.v4"]`).
+ *   3. User-triggered file downloads (`.json` backups, `.txt`/`.html` Play Store lists,
+ *      and `.json` Developer Diagnostics bundles).
+ *
+ * SECURITY NOTES:
+ *   - All HTML exports pass through `escapeHtml()` and `sanitizePlayStoreUrl()` so
+ *     untrusted backup labels or URLs can never inject scripts into `.html` files.
+ *   - All parsed storage payloads pass through `stripDangerousKeys()` to prevent
+ *     prototype pollution.
+ */
+
 import {
   DeviceProfile,
   LayoutBackupSnapshot,
@@ -8,6 +32,12 @@ import {
   FaultSimulationConfig,
   ServerDiagnosticsSnapshot,
 } from '../types/diagnostics';
+import {
+  escapeHtml,
+  sanitizePlayStoreUrl,
+  sanitizeText,
+  stripDangerousKeys,
+} from '../utils/sanitize';
 
 export const LOCAL_STORAGE_KEY = 'iconsync.vault.v4';
 const LEGACY_STORAGE_KEY = 'homegrid.vault.v3';
@@ -231,11 +261,11 @@ export async function loadVaultState(): Promise<{
     try {
       const raw = localStorage.getItem(key);
       if (raw) {
-        const parsed = JSON.parse(raw) as CloudVaultState;
+        const parsed = stripDangerousKeys(JSON.parse(raw)) as CloudVaultState;
         if (Array.isArray(parsed.devices) && parsed.devices.length > 0) {
           if (key === LEGACY_STORAGE_KEY) {
             try {
-              localStorage.setItem(LOCAL_STORAGE_KEY, raw);
+              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
             } catch {
               // ignore
             }
@@ -438,30 +468,37 @@ export function downloadMissingAppsFile(
   const dateStamp = new Date().toISOString().slice(0, 10);
 
   if (format === 'html') {
+    const safeDeviceTitle = escapeHtml(sanitizeText(targetDeviceName, 80));
+    const safeBackupTitle = escapeHtml(sanitizeText(backupName, 120));
     const rows = missingApps
-      .map(
-        (app, i) => `
+      .map((app, i) => {
+        const safeLabel = escapeHtml(sanitizeText(app.label, 80));
+        const safePkg = escapeHtml(sanitizeText(app.packageName, 160));
+        const safeLoc = escapeHtml(sanitizeText(app.targetLocation, 120));
+        const safeHref = escapeHtml(sanitizePlayStoreUrl(app.playStoreUrl, app.packageName));
+        return `
       <tr>
         <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-family:monospace;">${i + 1}</td>
-        <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;">${app.label}</td>
-        <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px;color:#4b5563;">${app.packageName}</td>
-        <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#4b5563;">${app.targetLocation}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;">${safeLabel}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px;color:#4b5563;">${safePkg}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#4b5563;">${safeLoc}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;">
-          <a href="${app.playStoreUrl}" target="_blank" rel="noopener noreferrer" style="color:#166534;font-weight:600;text-decoration:underline;">Open in Play Store</a>
+          <a href="${safeHref}" target="_blank" rel="noopener noreferrer" style="color:#166534;font-weight:600;text-decoration:underline;">Open in Play Store</a>
         </td>
-      </tr>`
-      )
+      </tr>`;
+      })
       .join('');
 
     const html = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Icon Sync Missing Apps — ${targetDeviceName}</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';" />
+  <title>Icon Sync Missing Apps — ${safeDeviceTitle}</title>
 </head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:860px;margin:32px auto;padding:0 20px;color:#111827;">
   <h1 style="font-size:22px;margin-bottom:6px;">Icon Sync Missing Apps Install List</h1>
-  <p style="font-size:13px;color:#4b5563;margin-top:0;">Target Device: <strong>${targetDeviceName}</strong> · Imported Backup: <strong>${backupName}</strong> · Generated ${dateStamp}</p>
+  <p style="font-size:13px;color:#4b5563;margin-top:0;">Target Device: <strong>${safeDeviceTitle}</strong> · Imported Backup: <strong>${safeBackupTitle}</strong> · Generated ${escapeHtml(dateStamp)}</p>
   <table style="width:100%;border-collapse:collapse;margin-top:20px;font-size:14px;">
     <thead>
       <tr style="text-align:left;background:#f9fafb;border-bottom:2px solid #e5e7eb;">

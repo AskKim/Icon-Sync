@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Sync GitHub Repository Description & Topics
+
+on:
+  workflow_dispatch:
+    inputs:
+      description:
+        description: 'GitHub repository description'
+        required: false
+        default: 'Icon Sync — Open-source (GPL-3.0+) Android home screen layout backup, cross-grid (6x6 to 5x4) adaptation, Replace/Merge restore, widget sync studio, developer diagnostics & Android APK.'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update-metadata:
+    name: Update GitHub Repo Description & Topics
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Update repository description and topics via GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_DESC: ${{ github.event.inputs.description }}
+        run: |
+          gh repo edit "${{ github.repository }}" \
+            --description "$REPO_DESC" \
+            --add-topic android \
+            --add-topic android-launcher \
+            --add-topic home-screen-backup \
+            --add-topic icon-sync \
+            --add-topic widget-sync \
+            --add-topic apk \
+            --add-topic kotlin \
+            --add-topic react \
+            --add-topic typescript \
+            --add-topic gplv3

@@ -30,6 +30,7 @@ import {
   getLauncherCapability,
   LAUNCHER_GRID_CAPABILITIES,
 } from '../engine/layoutEngine';
+import { sanitizePlayStoreUrl } from '../utils/sanitize';
 import { AndroidIcon } from './AndroidIcon';
 
 interface InspectorPanelProps {
@@ -305,9 +306,10 @@ export function InspectorPanel({
 
   // Selected Icon Inspector
   if (selectedIcon) {
-    const playUrl =
-      selectedIcon.playStoreUrl ??
-      `https://play.google.com/store/apps/details?id=${encodeURIComponent(selectedIcon.packageName)}`;
+    const playUrl = sanitizePlayStoreUrl(
+      selectedIcon.playStoreUrl,
+      selectedIcon.packageName
+    );
     return (
       <div className="bg-white border border-[#E4E7EC] rounded-2xl p-6 space-y-5">
         <div className="flex items-center justify-between gap-3 border-b border-[#F1F3F6] pb-4">

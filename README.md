@@ -1,14 +1,16 @@
 # Icon Sync
 
-**Android Home Screen Layout Backup, Cross-Grid Adaptation (`6×6 → 5×4`), Replace/Merge Restoration, Developer Diagnostics, and Cross-Device Widget Sync Studio.**
+**Open-source (GPL-3.0+) Android Home Screen Layout Backup, Cross-Grid Adaptation (`6×6 → 5×4`), Replace/Merge Restoration, Developer Diagnostics, Cross-Device Widget Sync Studio & Native Android APK.**
 
-Icon Sync helps Android owners capture, organize, back up, and migrate home screens, supplemental pages, folders, dock shortcuts, and widget configurations across devices and launchers — including **Google Pixel**, **Samsung Galaxy A15**, **Samsung Galaxy A16**, **Samsung Galaxy S24 Ultra**, **Galaxy Tab S9 (Nova Launcher `6×6`)**, and custom/minimalist launchers — without losing layout structure or re-dragging every icon by hand.
+Icon Sync helps Android owners capture, organize, back up, and migrate home screens, supplemental pages, folders, dock shortcuts, and widget configurations across devices and launchers — including **Google Pixel**, **Samsung Galaxy A15**, **Samsung Galaxy A16**, **Samsung Galaxy S24 Ultra**, **Galaxy Tab S9 (Nova Launcher `6×6`)**, and custom/minimalist launchers (registerable via **+ Add Device**) — without losing layout structure or re-dragging every icon by hand.
+
+> **New to this codebase or exploring with an AI assistant?** Read **[ARCHITECTURE.md](./ARCHITECTURE.md)** for a beginner-friendly 60-second mental model, annotated file tree, data flow diagrams, and "How do I change X?" recipes.
 
 ---
 
 ## Plain-English Overview
 
-1. **Inspect, Auto-Detect & Report Launcher Grids**: Pick any device to view and rearrange icons, folders, dock items, and widgets. Icon Sync auto-detects grid sizes on supported launchers (via Launcher Provider or opt-in Accessibility bounds) and lets Mini / Minimalist launcher users manually report custom `3×3` through `8×8` grids (e.g., `5×4`, `6×6`, `7×7`).
+1. **Inspect, Register, Auto-Detect & Report Launcher Grids**: Pick any pre-configured device or click **+ Add Device** to register your own phone or `5×4` Mini Launcher. Icon Sync auto-detects grid sizes on supported launchers (via Launcher Provider or opt-in Accessibility bounds) and lets custom/Mini launcher users report any `3×3` through `8×8` grid.
 2. **Create a Backup**: Save a portable `v2.0` JSON layout snapshot with an FNV-1a integrity checksum to the local Express Cloud Vault (`.data/icon-sync-vault.json`) or download it to disk.
 3. **Cross-Grid Import & Restore (Replace or Merge)**:
    - Detects mismatched layouts (such as importing a **`6×6`** Nova Launcher backup into a **`5×4`** compact launcher) and shows exact out-of-bounds impact before applying.
@@ -40,6 +42,7 @@ Icon Sync helps Android owners capture, organize, back up, and migrate home scre
 | **Web Studio CI** | `.github/workflows/ci-web.yml` | Runs `npm ci`, TypeScript typecheck (`npm run lint`), `npm run build`, and live Express `/api/health` + `/api/diagnostics` smoke tests. |
 | **Automated Release** | `.github/workflows/release.yml` | Triggered on `v*.*.*` tags or manual dispatch; builds Web Studio tarball + Android APK, generates `SHA256SUMS.txt`, and publishes a GitHub Release. |
 | **CodeQL & Security Audit** | `.github/workflows/codeql-security.yml` | Runs CodeQL static analysis (`javascript-typescript`) and `npm audit --omit=dev --audit-level=high` weekly and on PRs. |
+| **Sync Repo Description & Topics** | `.github/workflows/sync-repo-metadata.yml` | One-click `workflow_dispatch` action that sets the GitHub repository description and topic tags via GitHub CLI. |
 | **Dependabot** | `.github/dependabot.yml` | Keeps npm, Gradle (`/android`), and GitHub Actions dependencies up to date weekly. |
 
 ### Optional Release APK Signing Secrets
@@ -93,9 +96,10 @@ Open `http://localhost:3000` in your browser. Press `Ctrl+Shift+D` (or click **D
 
 ## Documentation & Governance
 
+- **Architecture & Beginner Guide**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 - **Privacy Policy**: [PRIVACY.md](./PRIVACY.md)
 - **Privacy Data Map**: [DATA_MAP.md](./DATA_MAP.md)
 - **Security Policy**: [SECURITY.md](./SECURITY.md)
 - **Contributing Guide**: [CONTRIBUTING.md](./CONTRIBUTING.md)
 - **Changelog**: [CHANGELOG.md](./CHANGELOG.md)
-- **License**: [LICENSE](./LICENSE)
+- **License**: [GNU General Public License v3.0 or later (`GPL-3.0-or-later`)](./LICENSE)

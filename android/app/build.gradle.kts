@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersionName = "2.2.0"
-val appVersionCode = 220
+val appVersionName = "2.3.0"
+val appVersionCode = 230
 
 android {
     namespace = "com.iconsync.android"

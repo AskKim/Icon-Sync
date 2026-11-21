@@ -4,7 +4,7 @@
 
 | Version | Supported |
 | :--- | :--- |
-| `2.2.x` (Current — Schema v2.0 / Vault Rev 5 / APK `com.iconsync.android`) | Yes |
+| `2.3.x` (Current — Schema v2.0 / Vault Rev 5 / APK `com.iconsync.android` / GPL-3.0+) | Yes |
 | `< 2.0` | No |
 
 ---
@@ -13,12 +13,12 @@
 
 Icon Sync is designed as a local-first layout studio with defensive validation at every import, build, and persistence boundary:
 
-- **Strict Backup Validation & Safe Repair (`validateBackupPayload` / `repairBackupPayload`)**: Every uploaded `.json` backup file is structurally validated before previewing or applying changes — checking schema version (`2.0`), FNV-1a checksum integrity, numeric grid bounds (`3–8 × 3–8`), and valid screen arrays.
+- **Strict Backup Validation, Sanitation & Safe Repair (`src/utils/sanitize.ts`, `validateBackupPayload`, `repairBackupPayload`)**: Every uploaded `.json` backup file is stripped of prototype-pollution keys (`__proto__`, `constructor`, `prototype`), bounded in grid dimensions (`3–8 × 3–8`), normalized for safe text/package/hex-color values, and verified against FNV-1a checksums.
+- **Safe HTML Export & Link Allowlisting**: Generated `.html` Missing Apps checklists escape every dynamic value via `escapeHtml()`, embed a strict `Content-Security-Policy` meta tag (`default-src 'none'; style-src 'unsafe-inline';`), and enforce `https://play.google.com/store/apps/details?id=...` on all Play Store links across both exported HTML and in-app anchors (`MissingAppsModal`, `InspectorPanel`).
+- **Hardened Express Cloud Vault (`server.ts`)**: Disables `X-Powered-By`, sets `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, and `Cache-Control: no-store` on `/api/*`, confines disk paths strictly inside `.data/`, writes vaults atomically (`tmp` + `rename`) with `0600` permissions, validates backup IDs against `^[a-zA-Z0-9_-]{1,96}$`, bounds payload sizes (`4mb`) and array lengths, and enforces per-IP write rate limiting (`429 Too Many Requests`).
 - **Automated Security Scanning**: GitHub Actions runs **CodeQL** static analysis (`javascript-typescript`), production `npm audit --audit-level=high`, and **Dependabot** weekly dependency updates across npm, Gradle, and Actions.
 - **Secret-Safe APK Signing**: Android release signing in `.github/workflows/build-android-apk.yml` reads exclusively from GitHub Actions Secrets (`ICONSYNC_KEYSTORE_*`), decodes keystores into ephemeral `$RUNNER_TEMP`, and deletes the keystore file immediately after build. No keystores or passwords are ever committed.
 - **Non-Destructive Rollback**: Every Replace or Merge restoration captures an in-memory rollback snapshot of the target device prior to applying changes, enabling immediate one-click Undo.
-- **Bounded Request Bodies**: Express JSON parsing enforces a `4mb` payload cap (`express.json({ limit: '4mb' })`) and validates expected array types on `/api/vault` and object/ID types on `/api/backups`.
-- **Safe External Links**: Generated Google Play Store links strictly target `https://play.google.com/store/apps/details?id=<packageName>` with `rel="noopener noreferrer"` in exported HTML checklists.
 
 ---
 

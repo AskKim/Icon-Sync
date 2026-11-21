@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.3.0] — 2026-11-21
+
+### Security & Hardening
+- **Input Sanitation Layer (`src/utils/sanitize.ts`)**: Added `escapeHtml()`, `sanitizePlayStoreUrl()`, `sanitizePackageName()`, `sanitizeHexColor()`, `sanitizeText()`, `isSafeEntityId()`, and `stripDangerousKeys()` to sanitize all untrusted JSON uploads, Play Store links, and HTML checklist exports.
+- **Safe HTML Checklists & Play Store Links**: Escaped all interpolated fields and added a strict `Content-Security-Policy` meta header in exported `.html` Missing Apps checklists (`src/services/cloudApi.ts`), and enforced strict `https://play.google.com/store/apps/details?id=...` link validation in `MissingAppsModal.tsx` and `InspectorPanel.tsx`.
+- **Hardened Express Cloud Vault (`server.ts`)**: Disabled `X-Powered-By`, added security headers (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control: no-store`), atomic `0600` temp-and-rename vault writes, explicit `.data/` path confinement, prototype-pollution stripping, entity ID validation, collection size caps, per-IP write rate limiting, and clean JSON syntax error responses.
+
+### Added & Optimized
+- **Register Custom Device / Mini Launcher Modal (`AddDeviceModal.tsx`)**: Added **+ Add Device** in the Screens toolbar with quick templates (`Mini Launcher Phone 5×4`, `Lawnchair 14 5×5`, `Nova Power Phone 6×6`) and custom `3–8 × 3–8` grids.
+- **Enhanced Backup Archives (`BackupsView.tsx`)**: Added memoized grid-dimension filter (`All Grids`, `6×6`, `4×6`, etc.), sorting (`Newest`, `Oldest`, `Name A–Z`, `Most Icons`), one-click snapshot **Clone**, and two-step inline Delete confirmation.
+- **Performance Optimization**: Added FNV-1a signature deduplication to auto-persist in `App.tsx` (preventing redundant `PUT /api/vault` requests) and memoized device/package lookups.
+- **Rich AI & Beginner Documentation (`ARCHITECTURE.md`)**: Added a plain-English architecture map, annotated file tree, data flow diagrams, and "How do I change X?" recipes plus rich module docblocks across core source files.
+- **GitHub Metadata Sync Workflow**: Added `.github/workflows/sync-repo-metadata.yml` to update the GitHub repository description and topics in one click.
+
+### License
+- Relicense project under **GNU General Public License v3.0 or later (`GPL-3.0-or-later`)** across `LICENSE`, `package.json`, documentation, and SPDX file headers.
+
+---
+
 ## [2.2.0] — 2026-11-21
 
 ### Changed

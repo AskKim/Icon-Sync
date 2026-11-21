@@ -1,4 +1,14 @@
-import React, { useState } from 'react';
+/**
+ * @file src/components/MissingAppsModal.tsx
+ * @license GPL-3.0-or-later
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Guides users through installing apps that were present in an imported backup
+ * but missing from the target Android phone, using strictly validated Play Store URLs.
+ */
+
+import React, { useMemo, useState } from 'react';
 import {
   CheckCircle2,
   ChevronLeft,
@@ -11,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { MissingAppEntry } from '../types/layout';
+import { sanitizePlayStoreUrl } from '../utils/sanitize';
 import { AndroidIcon } from './AndroidIcon';
 
 interface MissingAppsModalProps {
@@ -37,12 +48,18 @@ export function MissingAppsModal({
   const [viewMode, setViewMode] = useState<'walkthrough' | 'list'>(initialView);
   const [stepIndex, setStepIndex] = useState(0);
 
-  const installedSet = new Set(installedPackages);
-  const completedCount = missingApps.filter((a) => installedSet.has(a.packageName)).length;
+  const installedSet = useMemo(() => new Set(installedPackages), [installedPackages]);
+  const completedCount = useMemo(
+    () => missingApps.filter((a) => installedSet.has(a.packageName)).length,
+    [missingApps, installedSet]
+  );
   const remainingCount = missingApps.length - completedCount;
 
   const safeStep = Math.min(stepIndex, Math.max(0, missingApps.length - 1));
   const currentApp = missingApps[safeStep];
+  const currentSafePlayUrl = currentApp
+    ? sanitizePlayStoreUrl(currentApp.playStoreUrl, currentApp.packageName)
+    : '';
   const isCurrentInstalled = currentApp ? installedSet.has(currentApp.packageName) : false;
 
   const handleMarkAndAdvance = (pkg: string) => {
@@ -170,10 +187,10 @@ export function MissingAppsModal({
 
               <div className="p-3 rounded-xl bg-white border border-[#E4E7EC] flex items-center justify-between gap-3">
                 <span className="text-xs font-mono text-[#4B5563] truncate">
-                  {currentApp.playStoreUrl}
+                  {currentSafePlayUrl}
                 </span>
                 <a
-                  href={currentApp.playStoreUrl}
+                  href={currentSafePlayUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#166534] bg-[#166534]/10 hover:bg-[#166534]/15 rounded-lg transition-colors whitespace-nowrap shrink-0"
@@ -250,7 +267,7 @@ export function MissingAppsModal({
 
                     <div className="flex items-center gap-2 shrink-0">
                       <a
-                        href={app.playStoreUrl}
+                        href={sanitizePlayStoreUrl(app.playStoreUrl, app.packageName)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[#374151] bg-[#F9FAFB] border border-[#E4E7EC] hover:border-[#166534] rounded-lg whitespace-nowrap"

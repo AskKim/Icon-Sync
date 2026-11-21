@@ -1,3 +1,31 @@
+/**
+ * @file src/engine/layoutEngine.ts
+ * @license GPL-3.0-or-later
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * ============================================================================
+ * ICON SYNC — CORE HOME SCREEN LAYOUT, CROSS-GRID ADAPTATION & AUDIT ENGINE
+ * ============================================================================
+ *
+ * PLAIN-ENGLISH OVERVIEW (for beginners & AI readers):
+ * Think of every Android home screen page as a spreadsheet of cells:
+ *   - `col` = column index starting at 0 on the left (`0 .. gridCols - 1`)
+ *   - `row` = row index starting at 0 at the top (`0 .. gridRows - 1`)
+ *   - Icons and folders occupy 1x1 cell; widgets occupy `spanX x spanY` cells.
+ *
+ * This pure TypeScript engine has zero React UI dependencies, which makes it
+ * deterministic, easy to test, and mirrored 1:1 in Kotlin (`GridRemapper.kt`).
+ *
+ * MAIN RESPONSIBILITIES:
+ *   1. Launcher Grid Registry & Auto-Detection (`LAUNCHER_GRID_CAPABILITIES`, `autoDetectDeviceGrid`)
+ *   2. Cross-Grid Compatibility Analysis (`analyzeGridCompatibility` — e.g., 6x6 -> 5x4)
+ *   3. 5-Strategy Layout Restore Solver (`computeRestoreResult` in Replace & Merge modes)
+ *   4. Strict Backup JSON Validation, Sanitation & Auto-Repair (`validateBackupPayload`, `repairBackupPayload`)
+ *   5. Workspace Integrity Auditor (`auditWorkspaceIntegrity`)
+ *   6. Cross-Device Widget State Propagation (`propagateSyncedWidget`, `pushWidgetToDevice`)
+ */
+
 import {
   AppIconItem,
   BackupStats,
@@ -17,6 +45,13 @@ import {
   WidgetItem,
 } from '../types/layout';
 import { IntegrityFinding } from '../types/diagnostics';
+import {
+  sanitizeHexColor,
+  sanitizePackageName,
+  sanitizePlayStoreUrl,
+  sanitizeText,
+  stripDangerousKeys,
+} from '../utils/sanitize';
 
 export const LAUNCHER_GRID_CAPABILITIES: LauncherGridCapability[] = [
   {
@@ -415,7 +450,8 @@ export function validateBackupPayload(raw: unknown): BackupValidationResult {
       repairable: false,
     };
   }
-  const obj = raw as Record<string, unknown>;
+  // Strip prototype-pollution keys (__proto__, constructor, prototype) before inspecting fields
+  const obj = stripDangerousKeys(raw) as Record<string, unknown>;
   if (!Array.isArray(obj.screens) || obj.screens.length === 0) {
     return {
       valid: false,
@@ -549,7 +585,8 @@ export function repairBackupPayload(raw: unknown): {
       error: 'Root JSON value must be an object containing a screens[] array.',
     };
   }
-  const obj = cloneDeep(raw as Record<string, unknown>);
+  // Strip dangerous keys before cloning and repairing untrusted JSON payloads
+  const obj = cloneDeep(stripDangerousKeys(raw) as Record<string, unknown>);
   const changes: string[] = [];
 
   if (!Array.isArray(obj.screens) || obj.screens.length === 0) {
@@ -576,16 +613,31 @@ export function repairBackupPayload(raw: unknown): {
 
     for (const ic of icons) {
       if (!ic.id) ic.id = uid('ic');
+      ic.label = sanitizeText(ic.label, 60) || 'App';
+      ic.packageName = sanitizePackageName(ic.packageName);
+      ic.tint = sanitizeHexColor(ic.tint, '#334155');
+      if (ic.playStoreUrl) {
+        ic.playStoreUrl = sanitizePlayStoreUrl(ic.playStoreUrl, ic.packageName);
+      }
       maxCol = Math.max(maxCol, (ic.col ?? 0) + 1);
       maxRow = Math.max(maxRow, (ic.row ?? 0) + 1);
     }
     for (const f of folders) {
       if (!f.id) f.id = uid('fld');
+      f.name = sanitizeText(f.name, 48) || 'Folder';
+      f.tint = sanitizeHexColor(f.tint, '#334155');
+      if (!Array.isArray(f.apps)) f.apps = [];
+      for (const nested of f.apps) {
+        nested.label = sanitizeText(nested.label, 60) || 'App';
+        nested.packageName = sanitizePackageName(nested.packageName);
+        nested.tint = sanitizeHexColor(nested.tint, '#334155');
+      }
       maxCol = Math.max(maxCol, (f.col ?? 0) + 1);
       maxRow = Math.max(maxRow, (f.row ?? 0) + 1);
     }
     for (const w of widgets) {
       if (!w.id) w.id = uid('w');
+      w.title = sanitizeText(w.title, 60) || 'Widget';
       maxCol = Math.max(maxCol, (w.col ?? 0) + (w.spanX ?? 1));
       maxRow = Math.max(maxRow, (w.row ?? 0) + (w.spanY ?? 1));
     }

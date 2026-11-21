@@ -1,4 +1,29 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+/**
+ * @file src/App.tsx
+ * @license GPL-3.0-or-later
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * ============================================================================
+ * ICON SYNC — ROOT APPLICATION ORCHESTRATOR
+ * ============================================================================
+ *
+ * PLAIN-ENGLISH OVERVIEW (for beginners & AI readers):
+ * `App.tsx` is the central control center of the Icon Sync web studio.
+ * It holds the single source of truth for:
+ *   - `devices`: Registered Android phones/tablets & their launcher grids
+ *   - `backups`: Saved Cloud Vault and local JSON snapshots
+ *   - `widgetSyncPolicy`: How widget edits sync across linked Android devices
+ *   - `feedbackItems`: Actionable Success / Action Needed / Failed banners
+ *   - `logs` & `faultConfig`: Under-the-hood Developer Tools diagnostics state
+ *
+ * TIP FOR NOVICE CODERS:
+ * All complex math (grid occupancy, 6x6 -> 5x4 remapping, checksum verification)
+ * lives outside this file inside `src/engine/layoutEngine.ts`. All HTTP/file I/O
+ * lives in `src/services/cloudApi.ts`. See `ARCHITECTURE.md` for a full map.
+ */
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   Cloud,
@@ -6,6 +31,7 @@ import {
   FolderSync,
   LayoutGrid,
   PackageSearch,
+  Plus,
   RefreshCw,
   RotateCcw,
   ScanLine,
@@ -72,6 +98,7 @@ import { WidgetSyncView } from './components/WidgetSyncView';
 import { HowItWorksView } from './components/HowItWorksView';
 import { DeveloperToolsView } from './components/DeveloperToolsView';
 import { FeedbackBanner } from './components/FeedbackBanner';
+import { AddDeviceModal } from './components/AddDeviceModal';
 
 type ActiveTab = 'screens' | 'backups' | 'widgets' | 'how-it-works' | 'developer';
 
@@ -108,6 +135,7 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
 
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [importModalState, setImportModalState] = useState<{
     open: boolean;
     backupId?: string;
@@ -430,22 +458,79 @@ export default function App() {
     [activeDeviceId, pushFeedback, recordLog]
   );
 
+  // Tracks last persisted checksum so identical states never trigger redundant PUT /api/vault writes
+  const lastSavedSignatureRef = useRef<string>('');
+
   // Auto-persist changes to Express Cloud Vault + localStorage after hydration
   useEffect(() => {
     if (!hydrated) return;
+    const signature = computeChecksum({ devices, backups, widgetSyncPolicy });
+    if (signature === lastSavedSignatureRef.current) return;
+
     const timer = window.setTimeout(() => {
+      lastSavedSignatureRef.current = signature;
       void persistCurrentState(devices, backups, widgetSyncPolicy, false);
-    }, 300);
+    }, 350);
     return () => window.clearTimeout(timer);
   }, [devices, backups, widgetSyncPolicy, hydrated, persistCurrentState]);
 
-  const activeDevice =
-    devices.find((d) => d.id === activeDeviceId) ?? devices[0];
+  const activeDevice = useMemo(
+    () => devices.find((d) => d.id === activeDeviceId) ?? devices[0],
+    [devices, activeDeviceId]
+  );
 
   const handleSelectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId);
     setActiveScreenIndex(0);
     setSelection({ type: 'screen' });
+  };
+
+  const handleCreateCustomDevice = (newDevice: DeviceProfile) => {
+    setDevices((prev) => [...prev, newDevice]);
+    setActiveDeviceId(newDevice.id);
+    setActiveScreenIndex(0);
+    setSelection({ type: 'screen' });
+    setShowAddDeviceModal(false);
+    recordLog({
+      level: 'success',
+      category: 'grid',
+      title: `Registered custom device "${newDevice.name}"`,
+      message: `${newDevice.launcher} · ${newDevice.gridCols}×${newDevice.gridRows} (${formatGridSourceLabel(newDevice.gridDetectionSource)}).`,
+    });
+    pushFeedback({
+      severity: 'success',
+      title: `Added ${newDevice.name} (${newDevice.gridCols}×${newDevice.gridRows})`,
+      message: `Ready for editing, backups, or cross-grid imports (try importing the 6×6 Nova backup into this ${newDevice.gridCols}×${newDevice.gridRows} layout).`,
+      recoveryActions: [
+        {
+          id: 'import-into-new-device',
+          label: 'Import Backup Into Device',
+          variant: 'primary',
+          onClick: () => setImportModalState({ open: true }),
+        },
+      ],
+    });
+  };
+
+  const handleDuplicateBackup = (source: LayoutBackupSnapshot) => {
+    const cloned: LayoutBackupSnapshot = {
+      ...cloneDeep(source),
+      id: uid('bk'),
+      name: `${source.name} (Copy)`,
+      createdAt: new Date().toISOString(),
+    };
+    setBackups((prev) => [cloned, ...prev]);
+    recordLog({
+      level: 'info',
+      category: 'vault',
+      title: `Duplicated backup "${source.name}"`,
+      message: `Created "${cloned.name}" (${cloned.gridCols}×${cloned.gridRows}).`,
+    });
+    pushFeedback({
+      severity: 'success',
+      title: `Cloned "${source.name}"`,
+      message: `Saved "${cloned.name}" to your backup archive.`,
+    });
   };
 
   const handleUpdateDevice = (nextDevice: DeviceProfile) => {
@@ -1865,6 +1950,15 @@ export default function App() {
                       </button>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={() => setShowAddDeviceModal(true)}
+                    title="Register custom phone or Mini Launcher grid"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[#166534] hover:bg-white rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Device
+                  </button>
                 </div>
 
                 <button
@@ -2050,6 +2144,7 @@ export default function App() {
             }
             onOpenExportModal={() => setShowExportModal(true)}
             onDownloadBackup={downloadBackupJson}
+            onDuplicateBackup={handleDuplicateBackup}
             onDeleteBackup={handleDeleteBackup}
           />
         )}
@@ -2133,6 +2228,14 @@ export default function App() {
           device={activeDevice}
           onClose={() => setShowExportModal(false)}
           onConfirmExport={handleConfirmExport}
+        />
+      )}
+
+      {/* Register Custom Device / Mini Launcher Modal */}
+      {showAddDeviceModal && (
+        <AddDeviceModal
+          onClose={() => setShowAddDeviceModal(false)}
+          onCreateDevice={handleCreateCustomDevice}
         />
       )}
 
