@@ -1,0 +1,199 @@
+import React, { useState } from 'react';
+import { Cloud, Download, HardDrive, X } from 'lucide-react';
+import { DeviceProfile } from '../types/layout';
+import { computeBackupStats } from '../engine/layoutEngine';
+
+interface BackupExportModalProps {
+  device: DeviceProfile;
+  onClose: () => void;
+  onConfirmExport: (payload: {
+    name: string;
+    notes: string;
+    destination: 'cloud' | 'local' | 'both';
+  }) => void;
+}
+
+export function BackupExportModal({
+  device,
+  onClose,
+  onConfirmExport,
+}: BackupExportModalProps) {
+  const defaultName = `${device.name} — ${new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })} Layout`;
+  const [name, setName] = useState(defaultName);
+  const [notes, setNotes] = useState('');
+  const [destination, setDestination] = useState<'cloud' | 'local' | 'both'>('both');
+
+  const stats = computeBackupStats(device.screens, device.dock);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onConfirmExport({
+      name: name.trim() || defaultName,
+      notes: notes.trim(),
+      destination,
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-[#111827]/45 backdrop-blur-xs flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg bg-white border border-[#E4E7EC] rounded-2xl shadow-xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-[#F1F3F6] flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-[#111827]">
+              Save & Export Home Screen Layout
+            </h2>
+            <p className="text-xs text-[#6B7280] mt-0.5">
+              {device.name} · {device.launcher} · {device.gridCols}×{device.gridRows} grid
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close export modal"
+            className="w-9 h-9 rounded-lg hover:bg-[#F3F4F6] flex items-center justify-center text-[#6B7280] hover:text-[#111827] cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {/* Capture summary strip */}
+          <div className="grid grid-cols-4 gap-3 py-3 px-4 rounded-xl bg-[#F9FAFB] border border-[#E4E7EC] text-center">
+            <div>
+              <p className="text-[11px] text-[#6B7280]">Screens</p>
+              <p className="text-base font-semibold font-mono tabular-nums text-[#111827]">
+                {stats.screenCount}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-[#6B7280]">Icons</p>
+              <p className="text-base font-semibold font-mono tabular-nums text-[#111827]">
+                {stats.iconCount + stats.nestedAppCount}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-[#6B7280]">Folders</p>
+              <p className="text-base font-semibold font-mono tabular-nums text-[#111827]">
+                {stats.folderCount}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-[#6B7280]">Widgets</p>
+              <p className="text-base font-semibold font-mono tabular-nums text-[#111827]">
+                {stats.widgetCount}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3.5">
+            <div>
+              <label className="block text-xs font-medium text-[#374151] mb-1.5">
+                Backup Snapshot Name
+              </label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3.5 py-2 text-sm bg-[#F9FAFB] border border-[#E4E7EC] rounded-lg focus:outline-none focus:border-[#166534]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#374151] mb-1.5">
+                Migration Notes (optional)
+              </label>
+              <textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g. Before upgrading to Pixel 10, includes synced Tasks and Weather widgets"
+                className="w-full px-3.5 py-2 text-sm bg-[#F9FAFB] border border-[#E4E7EC] rounded-lg focus:outline-none focus:border-[#166534] resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#374151] mb-2">
+                Export Destination
+              </label>
+              <div className="grid grid-cols-3 gap-2.5">
+                {[
+                  {
+                    id: 'both' as const,
+                    title: 'Cloud + File',
+                    desc: 'Sync vault & download JSON',
+                    icon: Cloud,
+                  },
+                  {
+                    id: 'cloud' as const,
+                    title: 'Cloud Vault',
+                    desc: 'Instant cross-device access',
+                    icon: HardDrive,
+                  },
+                  {
+                    id: 'local' as const,
+                    title: 'Local File',
+                    desc: 'Download .json archive',
+                    icon: Download,
+                  },
+                ].map((opt) => {
+                  const Icon = opt.icon;
+                  const active = destination === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setDestination(opt.id)}
+                      className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                        active
+                          ? 'border-[#166534] bg-[#166534]/5'
+                          : 'border-[#E4E7EC] hover:border-[#9CA3AF]'
+                      }`}
+                    >
+                      <Icon
+                        className={`w-4 h-4 mb-1.5 ${
+                          active ? 'text-[#166534]' : 'text-[#6B7280]'
+                        }`}
+                      />
+                      <p className="text-xs font-semibold text-[#111827]">{opt.title}</p>
+                      <p className="text-[11px] text-[#6B7280] mt-0.5 leading-snug">{opt.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-medium text-[#4B5563] hover:text-[#111827] rounded-lg cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-xs font-semibold text-white bg-[#166534] hover:bg-[#14532D] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {destination === 'local'
+                ? 'Download Backup JSON'
+                : destination === 'cloud'
+                ? 'Save to Cloud Vault'
+                : 'Save to Cloud & Download'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

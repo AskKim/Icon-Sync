@@ -1,0 +1,6 @@
+{
+  "name": "HomeGrid",
+  "description": "Android home screen layout backup, migration, Replace/Merge restoration, and cross-device app widget synchronization studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
