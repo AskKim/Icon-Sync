@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import {
   ArrowRightLeft,
+  ExternalLink,
   FolderPlus,
   LayoutGrid,
+  PackageCheck,
   Plus,
+  Radar,
   RefreshCw,
+  Sliders,
   Trash2,
 } from 'lucide-react';
 import {
@@ -21,6 +25,11 @@ import {
   WIDGET_TEMPLATES,
   WidgetTemplate,
 } from '../data/catalog';
+import {
+  formatGridSourceLabel,
+  getLauncherCapability,
+  LAUNCHER_GRID_CAPABILITIES,
+} from '../engine/layoutEngine';
 import { AndroidIcon } from './AndroidIcon';
 
 interface InspectorPanelProps {
@@ -28,11 +37,14 @@ interface InspectorPanelProps {
   activeScreenIndex: number;
   selection: SelectionTarget;
   onUpdateDevice: (next: DeviceProfile) => void;
+  onChangeDeviceGrid: (cols: number, rows: number) => void;
+  onAutoDetectGrid: () => void;
   onUpdateWidgetWithSync: (widget: WidgetItem, propagate: boolean) => void;
   onPlaceAppAt: (app: AppCatalogEntry, col: number, row: number) => void;
   onCreateFolderAt: (name: string, col: number, row: number) => void;
   onPlaceWidgetAt: (template: WidgetTemplate, col: number, row: number) => void;
   onDeleteScreen: (screenId: string) => void;
+  onMarkPackageInstalled: (packageName: string) => void;
   onSelect: (target: SelectionTarget) => void;
 }
 
@@ -41,17 +53,21 @@ export function InspectorPanel({
   activeScreenIndex,
   selection,
   onUpdateDevice,
+  onChangeDeviceGrid,
+  onAutoDetectGrid,
   onUpdateWidgetWithSync,
   onPlaceAppAt,
   onCreateFolderAt,
   onPlaceWidgetAt,
   onDeleteScreen,
+  onMarkPackageInstalled,
   onSelect,
 }: InspectorPanelProps) {
   const [drawerTab, setDrawerTab] = useState<'apps' | 'widgets' | 'folder'>('apps');
   const [searchQuery, setSearchQuery] = useState('');
   const [newFolderName, setNewFolderName] = useState('Utilities');
   const [newTaskText, setNewTaskText] = useState('');
+  const [showCustomGridForm, setShowCustomGridForm] = useState(false);
 
   const safeIndex = Math.min(activeScreenIndex, Math.max(0, device.screens.length - 1));
   const currentScreen: HomeScreenPage = device.screens[safeIndex];
@@ -289,13 +305,24 @@ export function InspectorPanel({
 
   // Selected Icon Inspector
   if (selectedIcon) {
+    const playUrl =
+      selectedIcon.playStoreUrl ??
+      `https://play.google.com/store/apps/details?id=${encodeURIComponent(selectedIcon.packageName)}`;
     return (
       <div className="bg-white border border-[#E4E7EC] rounded-2xl p-6 space-y-5">
         <div className="flex items-center justify-between gap-3 border-b border-[#F1F3F6] pb-4">
           <div className="flex items-center gap-3 min-w-0">
-            <AndroidIcon iconKey={selectedIcon.iconKey} tint={selectedIcon.tint} size="md" />
+            <AndroidIcon
+              iconKey={selectedIcon.iconKey}
+              tint={selectedIcon.tint}
+              size="md"
+              isPlaceholder={Boolean(selectedIcon.isPlaceholder)}
+            />
             <div className="min-w-0">
-              <h3 className="text-base font-semibold text-[#111827] truncate">{selectedIcon.label}</h3>
+              <h3 className="text-base font-semibold text-[#111827] truncate">
+                {selectedIcon.label}
+                {selectedIcon.isPlaceholder ? ' (Placeholder)' : ''}
+              </h3>
               <p className="text-xs font-mono text-[#6B7280] truncate">{selectedIcon.packageName}</p>
             </div>
           </div>
@@ -307,6 +334,36 @@ export function InspectorPanel({
             Done
           </button>
         </div>
+
+        {selectedIcon.isPlaceholder && (
+          <div className="p-4 rounded-xl bg-[#FAFBFD] border border-[#E4E7EC] space-y-3">
+            <p className="text-xs font-semibold text-[#111827]">
+              App Not Installed on {device.name}
+            </p>
+            <p className="text-xs text-[#4B5563] leading-relaxed">
+              This dummy placeholder holds slot ({selectedIcon.col + 1}, {selectedIcon.row + 1}) so your layout stays intact. Install the app from Google Play, then convert this placeholder into a live icon.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={playUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#111827] bg-white border border-[#E4E7EC] hover:border-[#166534] rounded-lg"
+              >
+                Open Play Store
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+              <button
+                type="button"
+                onClick={() => onMarkPackageInstalled(selectedIcon.packageName)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#166534] hover:bg-[#14532D] rounded-lg cursor-pointer"
+              >
+                <PackageCheck className="w-3.5 h-3.5" />
+                Mark Installed
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -448,23 +505,42 @@ export function InspectorPanel({
             {selectedFolder.apps.map((app) => (
               <div key={app.id} className="px-3 py-2 flex items-center justify-between gap-2 bg-white">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <AndroidIcon iconKey={app.iconKey} tint={app.tint} size="sm" />
+                  <AndroidIcon
+                    iconKey={app.iconKey}
+                    tint={app.tint}
+                    size="sm"
+                    isPlaceholder={Boolean(app.isPlaceholder)}
+                  />
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-[#111827] truncate">{app.label}</p>
+                    <p className="text-xs font-medium text-[#111827] truncate">
+                      {app.label}
+                      {app.isPlaceholder ? ' · Placeholder' : ''}
+                    </p>
                     <p className="text-[10px] font-mono text-[#6B7280] truncate">{app.packageName}</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleUpdateFolder(selectedFolder.id, {
-                      apps: selectedFolder.apps.filter((a) => a.id !== app.id),
-                    })
-                  }
-                  className="text-xs text-[#DC2626] hover:underline shrink-0 cursor-pointer"
-                >
-                  Remove
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {app.isPlaceholder && (
+                    <button
+                      type="button"
+                      onClick={() => onMarkPackageInstalled(app.packageName)}
+                      className="text-xs font-medium text-[#166534] hover:underline cursor-pointer"
+                    >
+                      Install
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleUpdateFolder(selectedFolder.id, {
+                        apps: selectedFolder.apps.filter((a) => a.id !== app.id),
+                      })
+                    }
+                    className="text-xs text-[#DC2626] hover:underline cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             ))}
             {selectedFolder.apps.length === 0 && (
@@ -858,39 +934,150 @@ export function InspectorPanel({
           />
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-[#374151] mb-1.5">
-            Launcher Grid Density
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { cols: 4, rows: 5, label: '4 × 5' },
-              { cols: 5, rows: 5, label: '5 × 5' },
-              { cols: 5, rows: 6, label: '5 × 6' },
-            ].map((opt) => {
-              const active = device.gridCols === opt.cols && device.gridRows === opt.rows;
-              return (
-                <button
-                  key={opt.label}
-                  type="button"
-                  onClick={() =>
-                    onUpdateDevice({
-                      ...device,
-                      gridCols: opt.cols,
-                      gridRows: opt.rows,
-                    })
-                  }
-                  className={`py-2 px-3 text-xs font-mono font-medium rounded-lg border transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-[#111827] text-white border-[#111827]'
-                      : 'bg-white text-[#374151] border-[#E4E7EC] hover:border-[#9CA3AF]'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <label className="block text-xs font-medium text-[#374151]">
+                Launcher & Grid Configuration
+              </label>
+              <p className="text-[11px] text-[#6B7280] mt-0.5">
+                {formatGridSourceLabel(device.gridDetectionSource)} ·{' '}
+                <span className="font-mono tabular-nums text-[#111827]">
+                  {device.gridCols}×{device.gridRows}
+                </span>{' '}
+                ({device.gridCols * device.gridRows} slots/screen)
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onAutoDetectGrid}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-[#166534] bg-[#166534]/10 hover:bg-[#166534]/15 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <Radar className="w-3.5 h-3.5" />
+                Auto-Detect
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCustomGridForm((v) => !v)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-[#374151] bg-[#F9FAFB] border border-[#E4E7EC] hover:border-[#9CA3AF] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                {showCustomGridForm ? 'Hide Custom' : 'Report Grid'}
+              </button>
+            </div>
           </div>
+
+          {/* Launcher selector (supports stock, One UI, Nova, Lawnchair, Mini launchers) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <label htmlFor="launcher-select" className="block text-[11px] text-[#6B7280] mb-1">
+                Active Launcher
+              </label>
+              <select
+                id="launcher-select"
+                value={device.launcher}
+                onChange={(e) =>
+                  onUpdateDevice({
+                    ...device,
+                    launcher: e.target.value,
+                  })
+                }
+                className="w-full px-3 py-1.5 text-xs bg-[#F9FAFB] border border-[#E4E7EC] rounded-lg focus:outline-none focus:border-[#166534]"
+              >
+                {[
+                  device.launcher,
+                  ...LAUNCHER_GRID_CAPABILITIES.map((c) => c.launcherName),
+                ]
+                  .filter((v, i, arr) => arr.indexOf(v) === i)
+                  .map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[#6B7280] mb-1">
+                Quick Grid Presets
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  { cols: 4, rows: 5 },
+                  { cols: 4, rows: 6 },
+                  { cols: 5, rows: 4 },
+                  { cols: 5, rows: 5 },
+                  { cols: 5, rows: 6 },
+                  { cols: 6, rows: 6 },
+                ].map((opt) => {
+                  const active = device.gridCols === opt.cols && device.gridRows === opt.rows;
+                  return (
+                    <button
+                      key={`${opt.cols}x${opt.rows}`}
+                      type="button"
+                      onClick={() => onChangeDeviceGrid(opt.cols, opt.rows)}
+                      className={`py-1.5 px-2 text-xs font-mono font-medium rounded-lg border transition-colors whitespace-nowrap cursor-pointer ${
+                        active
+                          ? 'bg-[#111827] text-white border-[#111827]'
+                          : 'bg-white text-[#374151] border-[#E4E7EC] hover:border-[#9CA3AF]'
+                      }`}
+                    >
+                      {opt.cols}×{opt.rows}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {showCustomGridForm && (
+            <div className="p-3.5 rounded-xl bg-[#FAFBFD] border border-[#E4E7EC] space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-[#111827]">
+                  Report Custom Launcher Grid
+                </p>
+                <span className="text-[11px] text-[#6B7280]">
+                  {getLauncherCapability(device.launcher).allowsCustomGrid
+                    ? 'Custom grids supported'
+                    : 'Launcher uses fixed presets'}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#4B5563] leading-relaxed">
+                {getLauncherCapability(device.launcher).detectionNotes}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] text-[#6B7280] mb-1">Columns (3–8)</label>
+                  <select
+                    value={device.gridCols}
+                    onChange={(e) => onChangeDeviceGrid(Number(e.target.value), device.gridRows)}
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-white border border-[#E4E7EC] rounded-lg"
+                  >
+                    {[3, 4, 5, 6, 7, 8].map((n) => (
+                      <option key={n} value={n}>
+                        {n} columns
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[#6B7280] mb-1">Rows (3–8)</label>
+                  <select
+                    value={device.gridRows}
+                    onChange={(e) => onChangeDeviceGrid(device.gridCols, Number(e.target.value))}
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-white border border-[#E4E7EC] rounded-lg"
+                  >
+                    {[3, 4, 5, 6, 7, 8].map((n) => (
+                      <option key={n} value={n}>
+                        {n} rows
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div>

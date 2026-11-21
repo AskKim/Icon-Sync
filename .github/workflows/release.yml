@@ -1,0 +1,93 @@
+name: Release Icon Sync (APK + Web Studio)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g., v2.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build APK & Web Bundle and Publish GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Build Web Studio bundle
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+          mkdir -p release-assets
+          tar -czf "release-assets/IconSync-web-${{ steps.tag.outputs.name }}.tar.gz" dist server.ts package.json package-lock.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Test & build Android APK
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.ICONSYNC_KEYSTORE_BASE64 }}
+          ICONSYNC_KEYSTORE_PASSWORD: ${{ secrets.ICONSYNC_KEYSTORE_PASSWORD }}
+          ICONSYNC_KEY_ALIAS: ${{ secrets.ICONSYNC_KEY_ALIAS }}
+          ICONSYNC_KEY_PASSWORD: ${{ secrets.ICONSYNC_KEY_PASSWORD }}
+        run: |
+          gradle testDebugUnitTest assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/*.apk ../release-assets/
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$ICONSYNC_KEYSTORE_PASSWORD" ] && [ -n "$ICONSYNC_KEY_ALIAS" ] && [ -n "$ICONSYNC_KEY_PASSWORD" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/iconsync-release.jks"
+            export ICONSYNC_KEYSTORE_PATH="$RUNNER_TEMP/iconsync-release.jks"
+            gradle assembleRelease --stacktrace
+            rm -f "$RUNNER_TEMP/iconsync-release.jks"
+            cp app/build/outputs/apk/release/*.apk ../release-assets/
+          fi
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: release-assets
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Icon Sync ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: release-assets/*

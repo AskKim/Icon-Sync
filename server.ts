@@ -7,7 +7,10 @@ import { createServer as createViteServer } from 'vite';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '.data');
-const VAULT_FILE = path.join(DATA_DIR, 'homegrid-vault.json');
+const VAULT_FILE = path.join(DATA_DIR, 'icon-sync-vault.json');
+const LEGACY_VAULT_FILE = path.join(DATA_DIR, 'homegrid-vault.json');
+const SERVICE_VERSION = '2.2.0';
+const STARTED_AT = Date.now();
 
 interface VaultStore {
   devices: unknown[];
@@ -17,6 +20,7 @@ interface VaultStore {
     autoSyncEnabled: boolean;
     lastSyncAt: string;
   };
+  schemaRevision?: number;
   updatedAt: string;
 }
 
@@ -28,11 +32,18 @@ function ensureDataDir(): void {
 
 function readVault(): VaultStore | null {
   try {
-    if (!fs.existsSync(VAULT_FILE)) {
-      return null;
+    if (fs.existsSync(VAULT_FILE)) {
+      const raw = fs.readFileSync(VAULT_FILE, 'utf-8');
+      return JSON.parse(raw) as VaultStore;
     }
-    const raw = fs.readFileSync(VAULT_FILE, 'utf-8');
-    return JSON.parse(raw) as VaultStore;
+    // Seamlessly migrate legacy HomeGrid vault file to Icon Sync
+    if (fs.existsSync(LEGACY_VAULT_FILE)) {
+      const raw = fs.readFileSync(LEGACY_VAULT_FILE, 'utf-8');
+      const parsed = JSON.parse(raw) as VaultStore;
+      writeVault(parsed);
+      return parsed;
+    }
+    return null;
   } catch (err) {
     console.error('Failed to read vault file:', err);
     return null;
@@ -56,7 +67,37 @@ async function startServer() {
 
   // Health endpoint
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'homegrid-cloud-vault' });
+    res.json({ ok: true, service: 'icon-sync-cloud-vault', version: SERVICE_VERSION });
+  });
+
+  // Under-the-hood diagnostics endpoint for the Developer Tools page
+  app.get('/api/diagnostics', (_req, res) => {
+    const exists = fs.existsSync(VAULT_FILE);
+    const legacyExists = fs.existsSync(LEGACY_VAULT_FILE);
+    let sizeBytes = 0;
+    let updatedAt: string | null = null;
+    if (exists) {
+      try {
+        const stat = fs.statSync(VAULT_FILE);
+        sizeBytes = stat.size;
+        const vault = readVault();
+        updatedAt = vault?.updatedAt ?? stat.mtime.toISOString();
+      } catch {
+        sizeBytes = 0;
+      }
+    }
+    res.json({
+      ok: true,
+      service: 'icon-sync-cloud-vault',
+      version: SERVICE_VERSION,
+      vaultFileExists: exists,
+      vaultFilePath: '.data/icon-sync-vault.json',
+      vaultSizeBytes: sizeBytes,
+      vaultUpdatedAt: updatedAt,
+      legacyVaultDetected: legacyExists,
+      uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
+      nodeVersion: process.version,
+    });
   });
 
   // Retrieve full cloud vault state (devices, cloud backups, widget sync policy)
@@ -84,6 +125,7 @@ async function startServer() {
         autoSyncEnabled: true,
         lastSyncAt: new Date().toISOString(),
       },
+      schemaRevision: typeof body.schemaRevision === 'number' ? body.schemaRevision : undefined,
       updatedAt: new Date().toISOString(),
     };
     writeVault(nextStore);
@@ -152,7 +194,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`HomeGrid server running on http://0.0.0.0:${PORT}`);
+    console.log(`Icon Sync server running on http://0.0.0.0:${PORT}`);
   });
 }
 

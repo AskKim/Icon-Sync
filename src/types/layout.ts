@@ -24,6 +24,8 @@ export interface AppIconItem {
   category: AppCategory;
   col: number;
   row: number;
+  isPlaceholder?: boolean;
+  playStoreUrl?: string;
 }
 
 export interface FolderItem {
@@ -102,17 +104,76 @@ export interface HomeScreenPage {
   widgets: WidgetItem[];
 }
 
+export type GridDetectionSource =
+  | 'launcher-provider'
+  | 'auto-accessibility'
+  | 'oem-profile'
+  | 'user-reported';
+
+export type GridConfidence = 'verified' | 'estimated' | 'manual';
+
+export interface GridDimensions {
+  cols: number;
+  rows: number;
+}
+
+export interface LauncherGridCapability {
+  id: string;
+  launcherName: string;
+  packageName: string;
+  supportsProviderQuery: boolean;
+  supportsAccessibilityDetect: boolean;
+  allowsCustomGrid: boolean;
+  minCols: number;
+  maxCols: number;
+  minRows: number;
+  maxRows: number;
+  presets: { cols: number; rows: number; label: string }[];
+  detectionNotes: string;
+}
+
+export type GridAdaptationStrategy =
+  | 'auto-reflow'
+  | 'proportional-scale'
+  | 'preserve-pages'
+  | 'resize-target-grid'
+  | 'crop-within-bounds';
+
+export interface GridCompatibilityAnalysis {
+  isExactMatch: boolean;
+  mismatchType: 'exact' | 'shrink' | 'expand' | 'aspect-shift';
+  sourceGrid: GridDimensions;
+  targetGrid: GridDimensions;
+  sourceCellsPerPage: number;
+  targetCellsPerPage: number;
+  cellCapacityDelta: number;
+  outOfBoundsIcons: number;
+  outOfBoundsFolders: number;
+  outOfBoundsWidgets: number;
+  widgetsRequiringResize: number;
+  totalAffectedItems: number;
+  canResizeTargetLauncher: boolean;
+  resizeTargetReason: string;
+  recommendedStrategy: GridAdaptationStrategy;
+  summary: string;
+}
+
 export interface DeviceProfile {
   id: string;
   name: string;
+  modelCode?: string;
   manufacturer: string;
   androidVersion: string;
   launcher: string;
   formFactor: 'phone' | 'tablet';
   gridCols: number;
   gridRows: number;
+  gridDetectionSource?: GridDetectionSource;
+  gridConfidence?: GridConfidence;
+  gridDetectedAt?: string;
   wallpaperId: string;
   lastScannedAt: string;
+  installedPackages: string[];
   screens: HomeScreenPage[];
   dock: Omit<AppIconItem, 'col' | 'row'>[];
 }
@@ -140,6 +201,7 @@ export interface LayoutBackupSnapshot {
   sourceLauncher: string;
   gridCols: number;
   gridRows: number;
+  gridDetectionSource?: GridDetectionSource;
   wallpaperId: string;
   screens: HomeScreenPage[];
   dock: Omit<AppIconItem, 'col' | 'row'>[];
@@ -149,27 +211,53 @@ export interface LayoutBackupSnapshot {
 
 export type RestoreMode = 'replace' | 'merge';
 
+export type MissingAppStrategy = 'placeholder' | 'guided' | 'skip';
+
+export interface MissingAppEntry {
+  packageName: string;
+  label: string;
+  iconKey: string;
+  tint: string;
+  category: AppCategory;
+  playStoreUrl: string;
+  targetLocation: string;
+  installed?: boolean;
+}
+
 export interface MergeOptions {
   deduplicateApps: boolean;
   mergeMatchingFolders: boolean;
   syncWidgetsOnImport: boolean;
   overflowToNewScreen: boolean;
+  missingAppStrategy: MissingAppStrategy;
+  gridStrategy?: GridAdaptationStrategy;
 }
 
 export interface RestoreDiffReport {
   mode: RestoreMode;
+  missingAppStrategy: MissingAppStrategy;
+  gridStrategy: GridAdaptationStrategy;
+  sourceGrid: GridDimensions;
+  targetGridBefore: GridDimensions;
+  targetGridAfter: GridDimensions;
   targetDeviceName: string;
   backupName: string;
   screensBefore: number;
   screensAfter: number;
   iconsAdded: number;
   iconsSkippedDuplicate: number;
+  placeholdersCreated: number;
+  missingAppsSkipped: number;
+  missingApps: MissingAppEntry[];
   foldersCreated: number;
   foldersMerged: number;
   nestedAppsMerged: number;
   widgetsPlaced: number;
   widgetsUpdated: number;
+  widgetsResized: number;
   reflowedItems: number;
+  outOfBoundsRelocated: number;
+  itemsDroppedByCrop: number;
   overflowScreensCreated: number;
   notes: string[];
 }

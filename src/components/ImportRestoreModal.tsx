@@ -1,21 +1,33 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Cloud,
   GitMerge,
+  Grid2x2Check,
   Layers,
+  PackageSearch,
   Upload,
+  Wrench,
   X,
 } from 'lucide-react';
 import {
   DeviceProfile,
+  GridAdaptationStrategy,
   LayoutBackupSnapshot,
   MergeOptions,
+  MissingAppStrategy,
   RestoreDiffReport,
   RestoreMode,
 } from '../types/layout';
-import { computeRestoreResult, validateBackupPayload } from '../engine/layoutEngine';
+import {
+  analyzeGridCompatibility,
+  computeRestoreResult,
+  formatGridSourceLabel,
+  repairBackupPayload,
+  validateBackupPayload,
+} from '../engine/layoutEngine';
 
 interface ImportRestoreModalProps {
   devices: DeviceProfile[];
@@ -28,8 +40,43 @@ interface ImportRestoreModalProps {
     nextDevice: DeviceProfile;
     report: RestoreDiffReport;
     importedBackup?: LayoutBackupSnapshot;
+    autoDownloadMissingFile: boolean;
   }) => void;
+  onReportTargetGrid?: (deviceId: string, cols: number, rows: number) => void;
+  onDownloadSampleBackup?: () => void;
 }
+
+const GRID_STRATEGIES: {
+  id: GridAdaptationStrategy;
+  title: string;
+  desc: string;
+}[] = [
+  {
+    id: 'auto-reflow',
+    title: 'Auto-Reflow & Overflow',
+    desc: 'Preserves reading order, resizes wide widgets to fit, and spills extra icons onto a new supplemental screen (zero loss).',
+  },
+  {
+    id: 'proportional-scale',
+    title: 'Proportional Spatial Scale',
+    desc: 'Maps corner and edge positions proportionally from source to target grid so muscle memory stays close.',
+  },
+  {
+    id: 'preserve-pages',
+    title: 'Split Per Source Page',
+    desc: 'Keeps each dense backup page separate by splitting overflow into "Part 1 / Part 2" sibling pages.',
+  },
+  {
+    id: 'resize-target-grid',
+    title: 'Resize Target Grid to Match',
+    desc: 'Switches the target device grid to match the backup dimensions for a 1:1 coordinate restore.',
+  },
+  {
+    id: 'crop-within-bounds',
+    title: 'Strict Bounds (Crop Excess)',
+    desc: 'Restores only items within the target grid dimensions and drops out-of-bounds slots without adding pages.',
+  },
+];
 
 export function ImportRestoreModal({
   devices,
@@ -38,6 +85,8 @@ export function ImportRestoreModal({
   initialBackupId,
   onClose,
   onApplyRestore,
+  onReportTargetGrid,
+  onDownloadSampleBackup,
 }: ImportRestoreModalProps) {
   const [sourceTab, setSourceTab] = useState<'cloud' | 'file'>(
     initialBackupId || backups.length > 0 ? 'cloud' : 'file'
@@ -46,14 +95,26 @@ export function ImportRestoreModal({
     initialBackupId ?? backups[0]?.id ?? ''
   );
   const [uploadedBackup, setUploadedBackup] = useState<LayoutBackupSnapshot | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [rawFailedPayload, setRawFailedPayload] = useState<unknown>(null);
+  const [uploadError, setUploadError] = useState<{
+    message: string;
+    repairable: boolean;
+    code?: string;
+  } | null>(null);
+  const [uploadRepairNote, setUploadRepairNote] = useState<string | null>(null);
+
   const [targetDeviceId, setTargetDeviceId] = useState<string>(initialTargetDeviceId);
   const [mode, setMode] = useState<RestoreMode>('merge');
+  const [autoDownloadMissingFile, setAutoDownloadMissingFile] = useState<boolean>(true);
+  const [showInlineGridReport, setShowInlineGridReport] = useState(false);
+
   const [mergeOptions, setMergeOptions] = useState<MergeOptions>({
     deduplicateApps: true,
     mergeMatchingFolders: true,
     syncWidgetsOnImport: true,
     overflowToNewScreen: true,
+    missingAppStrategy: 'guided',
+    gridStrategy: 'auto-reflow',
   });
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -61,9 +122,31 @@ export function ImportRestoreModal({
   const activeBackup: LayoutBackupSnapshot | undefined =
     sourceTab === 'file'
       ? uploadedBackup ?? undefined
-      : backups.find((b) => b.id === selectedBackupId);
+      : backups.find((b) => b.id === selectedBackupId) ?? backups[0];
 
+  const effectiveSelectedBackupId = activeBackup?.id ?? selectedBackupId;
   const targetDevice = devices.find((d) => d.id === targetDeviceId) ?? devices[0];
+
+  const gridAnalysis = useMemo(() => {
+    if (!activeBackup || !targetDevice) return null;
+    return analyzeGridCompatibility(targetDevice, activeBackup);
+  }, [activeBackup, targetDevice]);
+
+  // Auto-select recommended grid strategy whenever source/target pair changes
+  useEffect(() => {
+    if (!gridAnalysis) return;
+    setMergeOptions((prev) => ({
+      ...prev,
+      gridStrategy: gridAnalysis.isExactMatch ? 'auto-reflow' : gridAnalysis.recommendedStrategy,
+    }));
+  }, [
+    activeBackup?.id,
+    targetDevice?.id,
+    targetDevice?.gridCols,
+    targetDevice?.gridRows,
+    gridAnalysis?.isExactMatch,
+    gridAnalysis?.recommendedStrategy,
+  ]);
 
   const preview = useMemo(() => {
     if (!activeBackup || !targetDevice) return null;
@@ -73,20 +156,50 @@ export function ImportRestoreModal({
   const handleFileSelected = async (file: File | undefined) => {
     if (!file) return;
     setUploadError(null);
+    setUploadRepairNote(null);
+    setRawFailedPayload(null);
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as unknown;
       const result = validateBackupPayload(parsed);
       if (!result.valid || !result.backup) {
-        setUploadError(result.error ?? 'Invalid backup file.');
+        setUploadError({
+          message: result.error ?? 'Invalid backup file.',
+          repairable: Boolean(result.repairable),
+          code: result.errorCode,
+        });
+        setRawFailedPayload(parsed);
         setUploadedBackup(null);
         return;
       }
       setUploadedBackup(result.backup);
+      if (result.warnings && result.warnings.length > 0) {
+        setUploadRepairNote(result.warnings.join(' '));
+      }
       setSourceTab('file');
     } catch {
-      setUploadError('Could not parse JSON file. Select a valid HomeGrid .json layout backup.');
+      setUploadError({
+        message: 'Could not parse JSON file. Select a valid Icon Sync .json layout backup.',
+        repairable: false,
+        code: 'SYNTAX',
+      });
       setUploadedBackup(null);
+    }
+  };
+
+  const handleRepairUploadedFile = () => {
+    if (!rawFailedPayload) return;
+    const repaired = repairBackupPayload(rawFailedPayload);
+    if (repaired.repaired && repaired.backup) {
+      setUploadedBackup(repaired.backup);
+      setUploadError(null);
+      setRawFailedPayload(null);
+      setUploadRepairNote(`Auto-repaired backup: ${repaired.changes.join(' · ')}.`);
+    } else {
+      setUploadError({
+        message: repaired.error ?? 'Auto-repair could not recover this file.',
+        repairable: false,
+      });
     }
   };
 
@@ -97,8 +210,33 @@ export function ImportRestoreModal({
       nextDevice: preview.nextDevice,
       report: preview.report,
       importedBackup: sourceTab === 'file' && uploadedBackup ? uploadedBackup : undefined,
+      autoDownloadMissingFile: autoDownloadMissingFile && preview.report.missingApps.length > 0,
     });
   };
+
+  const missingStrategies: {
+    id: MissingAppStrategy;
+    title: string;
+    desc: string;
+  }[] = [
+    {
+      id: 'guided',
+      title: 'Placeholders + Guided Install',
+      desc: 'Place dummy icons in exact slots and step through Play Store installs right after import.',
+    },
+    {
+      id: 'placeholder',
+      title: 'Dummy Placeholder Icons',
+      desc: 'Hold each missing app’s slot with a dimmed placeholder icon until you install it later.',
+    },
+    {
+      id: 'skip',
+      title: 'Skip Uninstalled Apps',
+      desc: 'Only restore already-installed apps while still exporting a Play Store link checklist.',
+    },
+  ];
+
+  const missingCount = preview?.report.missingApps.length ?? 0;
 
   return (
     <div
@@ -115,7 +253,7 @@ export function ImportRestoreModal({
               Import & Restore Home Screen Layout
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
-              Choose a backup source and decide whether to replace or merge your current device layout.
+              Choose Replace or Merge mode, resolve any cross-grid differences, and handle uninstalled apps.
             </p>
           </div>
           <button
@@ -133,7 +271,9 @@ export function ImportRestoreModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-[#111827]">1. Backup Source</label>
+                <label htmlFor="backup-source-select" className="text-xs font-semibold text-[#111827]">
+                  1. Backup Source
+                </label>
                 <div className="flex items-center gap-1 p-0.5 bg-[#F3F4F6] rounded-md">
                   <button
                     type="button"
@@ -161,19 +301,33 @@ export function ImportRestoreModal({
               </div>
 
               {sourceTab === 'cloud' ? (
-                <select
-                  value={selectedBackupId}
-                  onChange={(e) => setSelectedBackupId(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm bg-[#F9FAFB] border border-[#E4E7EC] rounded-lg focus:outline-none focus:border-[#166534]"
-                >
-                  {backups.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.gridCols}×{b.gridRows})
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-1.5">
+                  <select
+                    id="backup-source-select"
+                    value={effectiveSelectedBackupId}
+                    onChange={(e) => setSelectedBackupId(e.target.value)}
+                    className="w-full px-3 py-2.5 text-sm bg-[#F9FAFB] border border-[#E4E7EC] rounded-lg focus:outline-none focus:border-[#166534]"
+                  >
+                    {backups.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.gridCols}×{b.gridRows})
+                      </option>
+                    ))}
+                  </select>
+                  {activeBackup && (
+                    <p className="text-[11px] text-[#6B7280] flex items-center gap-1.5 flex-wrap">
+                      <span>{activeBackup.sourceDeviceName}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{activeBackup.sourceLauncher}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-mono tabular-nums">
+                        {activeBackup.gridCols}×{activeBackup.gridRows}
+                      </span>
+                    </p>
+                  )}
+                </div>
               ) : (
-                <div>
+                <div className="space-y-2">
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -187,22 +341,61 @@ export function ImportRestoreModal({
                     className="w-full px-3.5 py-2.5 text-xs font-medium text-[#374151] bg-[#F9FAFB] hover:bg-[#F3F4F6] border border-dashed border-[#CBD5E1] rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer"
                   >
                     <Upload className="w-3.5 h-3.5 text-[#166534]" />
-                    {uploadedBackup ? uploadedBackup.name : 'Choose HomeGrid .json Backup'}
+                    {uploadedBackup ? uploadedBackup.name : 'Choose Icon Sync .json Backup'}
                   </button>
                   {uploadError && (
-                    <p className="text-[11px] text-[#DC2626] mt-1.5 flex items-center gap-1">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                      {uploadError}
+                    <div className="p-3 rounded-lg bg-[#FEF2F2] border border-[#FECACA] space-y-2">
+                      <p className="text-[11px] text-[#991B1B] flex items-start gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[#DC2626]" />
+                        <span>{uploadError.message}</span>
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {uploadError.repairable && (
+                          <button
+                            type="button"
+                            onClick={handleRepairUploadedFile}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-[#111827] hover:bg-[#1F2937] rounded-md cursor-pointer"
+                          >
+                            <Wrench className="w-3 h-3" />
+                            Auto-Repair & Normalize
+                          </button>
+                        )}
+                        {onDownloadSampleBackup && (
+                          <button
+                            type="button"
+                            onClick={onDownloadSampleBackup}
+                            className="px-2.5 py-1 text-[11px] font-medium text-[#374151] bg-white border border-[#E4E7EC] hover:border-[#9CA3AF] rounded-md cursor-pointer"
+                          >
+                            Download Valid Sample (.json)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {uploadRepairNote && (
+                    <p className="text-[11px] text-[#166534] bg-[#F0FDF4] border border-[#BBF7D0] rounded-lg px-3 py-2">
+                      {uploadRepairNote}
                     </p>
                   )}
                 </div>
               )}
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-[#111827] mb-2">
-                2. Target Android Device
-              </label>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-semibold text-[#111827]">
+                  2. Target Android Device
+                </label>
+                {onReportTargetGrid && (
+                  <button
+                    type="button"
+                    onClick={() => setShowInlineGridReport((v) => !v)}
+                    className="text-[11px] font-medium text-[#166534] hover:underline cursor-pointer"
+                  >
+                    {showInlineGridReport ? 'Hide grid override' : 'Report custom grid'}
+                  </button>
+                )}
+              </div>
               <select
                 value={targetDeviceId}
                 onChange={(e) => setTargetDeviceId(e.target.value)}
@@ -210,14 +403,151 @@ export function ImportRestoreModal({
               >
                 {devices.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name} · {d.gridCols}×{d.gridRows} ({d.screens.length} screens)
+                    {d.name} · {d.gridCols}×{d.gridRows} ({d.installedPackages.length} installed)
                   </option>
                 ))}
               </select>
+              <p className="text-[11px] text-[#6B7280] flex items-center gap-1.5 flex-wrap">
+                <span>{targetDevice.launcher}</span>
+                <span aria-hidden="true">·</span>
+                <span>{formatGridSourceLabel(targetDevice.gridDetectionSource)}</span>
+              </p>
+
+              {showInlineGridReport && onReportTargetGrid && (
+                <div className="p-2.5 rounded-lg bg-[#F9FAFB] border border-[#E4E7EC] flex items-center gap-2 text-xs">
+                  <span className="text-[#4B5563] shrink-0">Actual grid:</span>
+                  <select
+                    aria-label="Target columns"
+                    value={targetDevice.gridCols}
+                    onChange={(e) =>
+                      onReportTargetGrid(targetDevice.id, Number(e.target.value), targetDevice.gridRows)
+                    }
+                    className="px-2 py-1 bg-white border border-[#E4E7EC] rounded font-mono text-xs"
+                  >
+                    {[3, 4, 5, 6, 7, 8].map((n) => (
+                      <option key={n} value={n}>
+                        {n} cols
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[#6B7280]">×</span>
+                  <select
+                    aria-label="Target rows"
+                    value={targetDevice.gridRows}
+                    onChange={(e) =>
+                      onReportTargetGrid(targetDevice.id, targetDevice.gridCols, Number(e.target.value))
+                    }
+                    className="px-2 py-1 bg-white border border-[#E4E7EC] rounded font-mono text-xs"
+                  >
+                    {[3, 4, 5, 6, 7, 8].map((n) => (
+                      <option key={n} value={n}>
+                        {n} rows
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Step 2: Replace vs Merge Strategy */}
+          {/* Step 2.5: Cross-Grid Mismatch Resolution (e.g., 6×6 → 5×4) */}
+          {gridAnalysis && !gridAnalysis.isExactMatch && (
+            <div className="p-4 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-[#B45309] shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-[#111827]">
+                      Grid Configuration Mismatch: {gridAnalysis.sourceGrid.cols}×{gridAnalysis.sourceGrid.rows} → {gridAnalysis.targetGrid.cols}×{gridAnalysis.targetGrid.rows}
+                    </p>
+                    <p className="text-xs text-[#78350F] mt-0.5 leading-relaxed">
+                      {gridAnalysis.summary}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-mono tabular-nums text-[#92400E] whitespace-nowrap shrink-0">
+                  {gridAnalysis.sourceCellsPerPage} → {gridAnalysis.targetCellsPerPage} cells/page
+                </span>
+              </div>
+
+              {/* Impact metrics row */}
+              <div className="grid grid-cols-3 gap-2.5 text-xs bg-white/80 rounded-lg p-2.5 border border-[#FDE68A]/80">
+                <div>
+                  <span className="text-[#6B7280] block text-[11px]">Out-of-bounds items</span>
+                  <span className="font-mono font-semibold tabular-nums text-[#111827]">
+                    {gridAnalysis.totalAffectedItems} ({gridAnalysis.outOfBoundsIcons} icons · {gridAnalysis.outOfBoundsFolders} folders)
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[#6B7280] block text-[11px]">Widgets needing resize</span>
+                  <span className="font-mono font-semibold tabular-nums text-[#111827]">
+                    {gridAnalysis.widgetsRequiringResize}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[#6B7280] block text-[11px]">Target launcher resize</span>
+                  <span className="font-medium text-[#111827]">
+                    {gridAnalysis.canResizeTargetLauncher ? 'Supported natively' : 'Not supported'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Strategy picker */}
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-[#78350F]">
+                  Choose how to adapt {gridAnalysis.sourceGrid.cols}×{gridAnalysis.sourceGrid.rows} onto {gridAnalysis.targetGrid.cols}×{gridAnalysis.targetGrid.rows}:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {GRID_STRATEGIES.map((st) => {
+                    const active = (mergeOptions.gridStrategy ?? 'auto-reflow') === st.id;
+                    const disabled =
+                      st.id === 'resize-target-grid' && !gridAnalysis.canResizeTargetLauncher;
+                    const isRecommended = gridAnalysis.recommendedStrategy === st.id;
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() =>
+                          setMergeOptions((prev) => ({ ...prev, gridStrategy: st.id }))
+                        }
+                        className={`p-3 rounded-lg border text-left transition-colors ${
+                          disabled
+                            ? 'bg-white/40 border-[#E5E7EB] opacity-55 cursor-not-allowed'
+                            : active
+                            ? 'bg-white border-[#166534] ring-1 ring-[#166534]/20 cursor-pointer'
+                            : 'bg-white/80 border-[#FDE68A] hover:border-[#B45309] cursor-pointer'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-[#111827]">{st.title}</span>
+                          {isRecommended && !disabled && (
+                            <span className="text-[10px] font-semibold text-[#166534]">
+                              Recommended
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#4B5563] mt-1 leading-snug">
+                          {disabled ? gridAnalysis.resizeTargetReason : st.desc}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {gridAnalysis && gridAnalysis.isExactMatch && (
+            <div className="px-3.5 py-2.5 rounded-xl bg-[#F0FDF4] border border-[#BBF7D0] flex items-center gap-2 text-xs text-[#14532D]">
+              <Grid2x2Check className="w-4 h-4 text-[#166534] shrink-0" />
+              <span>
+                Exact <span className="font-mono font-semibold">{gridAnalysis.targetGrid.cols}×{gridAnalysis.targetGrid.rows}</span> grid match — all coordinates and widget spans restore 1:1.
+              </span>
+            </div>
+          )}
+
+          {/* Step 3: Replace vs Merge Strategy */}
           <div>
             <p className="text-xs font-semibold text-[#111827] mb-2.5">
               3. Restoration Mode
@@ -232,20 +562,18 @@ export function ImportRestoreModal({
                     : 'border-[#E4E7EC] hover:border-[#9CA3AF]'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <Layers
-                      className={`w-4 h-4 ${
-                        mode === 'replace' ? 'text-[#166534]' : 'text-[#6B7280]'
-                      }`}
-                    />
-                    <span className="text-sm font-semibold text-[#111827]">
-                      Replace Current Layout
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Layers
+                    className={`w-4 h-4 ${
+                      mode === 'replace' ? 'text-[#166534]' : 'text-[#6B7280]'
+                    }`}
+                  />
+                  <span className="text-sm font-semibold text-[#111827]">
+                    Replace Current Layout
+                  </span>
                 </div>
                 <p className="text-xs text-[#4B5563] leading-relaxed">
-                  Clears existing home screens, folders, dock, and widgets on {targetDevice.name}, restoring the exact backup layout with automatic grid-density adaptation.
+                  Clears existing screens, folders, and widgets on {targetDevice.name} and rebuilds the backup layout using your chosen grid strategy.
                 </p>
               </button>
 
@@ -258,23 +586,87 @@ export function ImportRestoreModal({
                     : 'border-[#E4E7EC] hover:border-[#9CA3AF]'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <GitMerge
-                      className={`w-4 h-4 ${
-                        mode === 'merge' ? 'text-[#166534]' : 'text-[#6B7280]'
-                      }`}
-                    />
-                    <span className="text-sm font-semibold text-[#111827]">
-                      Merge with Current Layout
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <GitMerge
+                    className={`w-4 h-4 ${
+                      mode === 'merge' ? 'text-[#166534]' : 'text-[#6B7280]'
+                    }`}
+                  />
+                  <span className="text-sm font-semibold text-[#111827]">
+                    Merge with Current Layout
+                  </span>
                 </div>
                 <p className="text-xs text-[#4B5563] leading-relaxed">
-                  Preserves all icons, folders, and widgets currently on {targetDevice.name}. Deduplicates apps, combines matching folders, and places additions into open slots.
+                  Preserves existing screens on {targetDevice.name}, deduplicates apps, merges identically named folders, and places additions in open slots.
                 </p>
               </button>
             </div>
+          </div>
+
+          {/* Step 4: Missing / Uninstalled Apps Handling */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-[#111827]">
+                4. Uninstalled Apps on {targetDevice.name}
+              </p>
+              <span className="text-xs font-mono tabular-nums text-[#4B5563]">
+                {missingCount === 0
+                  ? 'All backup apps installed'
+                  : `${missingCount} app${missingCount === 1 ? '' : 's'} not installed`}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {missingStrategies.map((st) => {
+                const active = mergeOptions.missingAppStrategy === st.id;
+                return (
+                  <button
+                    key={st.id}
+                    type="button"
+                    onClick={() =>
+                      setMergeOptions((prev) => ({ ...prev, missingAppStrategy: st.id }))
+                    }
+                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                      active
+                        ? 'border-[#166534] bg-[#166534]/5'
+                        : 'border-[#E4E7EC] hover:border-[#9CA3AF]'
+                    }`}
+                  >
+                    <p className="text-xs font-semibold text-[#111827]">{st.title}</p>
+                    <p className="text-[11px] text-[#6B7280] mt-1 leading-snug">{st.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {missingCount > 0 && (
+              <div className="p-3.5 rounded-xl bg-[#FAFBFD] border border-[#E4E7EC] space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[#111827]">
+                  <PackageSearch className="w-3.5 h-3.5 text-[#D97706]" />
+                  <span>
+                    Missing from {targetDevice.name}:{' '}
+                    <span className="font-normal text-[#4B5563]">
+                      {preview?.report.missingApps
+                        .slice(0, 6)
+                        .map((a) => a.label)
+                        .join(', ')}
+                      {missingCount > 6 ? ` +${missingCount - 6} more` : ''}
+                    </span>
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-[#374151] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={autoDownloadMissingFile}
+                    onChange={(e) => setAutoDownloadMissingFile(e.target.checked)}
+                    className="w-4 h-4 accent-[#166534]"
+                  />
+                  <span>
+                    Automatically download a Play Store links file (.txt) for missing apps when import finishes
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           {/* Merge fine-tuning controls */}
@@ -322,13 +714,13 @@ export function ImportRestoreModal({
           {/* Pre-flight Diff Preview */}
           {preview && activeBackup ? (
             <div className="p-4 rounded-xl border border-[#E4E7EC] bg-white space-y-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 text-xs font-semibold text-[#111827]">
                   <CheckCircle2 className="w-4 h-4 text-[#166534]" />
                   Pre-Flight Restoration Preview
                 </div>
                 <span className="text-[11px] font-mono text-[#6B7280] tabular-nums">
-                  Checksum {activeBackup.checksum}
+                  {preview.report.sourceGrid.cols}×{preview.report.sourceGrid.rows} → {preview.report.targetGridAfter.cols}×{preview.report.targetGridAfter.rows} · Checksum {activeBackup.checksum}
                 </span>
               </div>
 
@@ -340,26 +732,21 @@ export function ImportRestoreModal({
                   </p>
                 </div>
                 <div className="border-t border-[#F1F3F6] pt-2">
-                  <p className="text-[#6B7280]">Icons Added</p>
+                  <p className="text-[#6B7280]">Active / Placeholders</p>
                   <p className="font-mono font-semibold text-[#111827] tabular-nums mt-0.5">
-                    +{preview.report.iconsAdded}
-                    {preview.report.iconsSkippedDuplicate > 0 && (
-                      <span className="text-[#6B7280] font-normal">
-                        {' '}({preview.report.iconsSkippedDuplicate} dupes)
-                      </span>
-                    )}
+                    +{preview.report.iconsAdded} live · {preview.report.placeholdersCreated} dummy
                   </p>
                 </div>
                 <div className="border-t border-[#F1F3F6] pt-2">
-                  <p className="text-[#6B7280]">Folders</p>
+                  <p className="text-[#6B7280]">Grid Remapped</p>
                   <p className="font-mono font-semibold text-[#111827] tabular-nums mt-0.5">
-                    +{preview.report.foldersCreated} new · {preview.report.foldersMerged} merged
+                    {preview.report.reflowedItems} moved · {preview.report.widgetsResized} resized
                   </p>
                 </div>
                 <div className="border-t border-[#F1F3F6] pt-2">
-                  <p className="text-[#6B7280]">Widgets</p>
+                  <p className="text-[#6B7280]">Folders / Widgets</p>
                   <p className="font-mono font-semibold text-[#111827] tabular-nums mt-0.5">
-                    +{preview.report.widgetsPlaced} placed · {preview.report.widgetsUpdated} synced
+                    +{preview.report.foldersCreated} fld · +{preview.report.widgetsPlaced} wdg
                   </p>
                 </div>
               </div>

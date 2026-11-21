@@ -1,0 +1,59 @@
+name: Web Studio CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-build-smoke:
+    name: Typecheck, Build & Express Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run lint
+
+      - name: Build production web bundle
+        run: npm run build
+
+      - name: Smoke test Icon Sync Express Cloud Vault server
+        run: |
+          NODE_ENV=production npx tsx server.ts &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/health.json; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          cat /tmp/health.json
+          grep -q '"icon-sync-cloud-vault"' /tmp/health.json
+
+          curl -fsS http://127.0.0.1:3000/api/diagnostics > /tmp/diag.json
+          cat /tmp/diag.json
+          grep -q '"ok":true' /tmp/diag.json

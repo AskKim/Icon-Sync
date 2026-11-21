@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.IconSync" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#166534</item>
+        <item name="colorPrimaryDark">#14532D</item>
+        <item name="colorAccent">#166534</item>
+    </style>
+</resources>

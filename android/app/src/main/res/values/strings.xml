@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Icon Sync</string>
+    <string name="accessibility_service_label">Icon Sync Grid Detector</string>
+    <string name="accessibility_service_description">Opt-in helper that inspects your home screen column and row grid density so Icon Sync can accurately adapt layouts across launchers.</string>
+</resources>

@@ -1,0 +1,127 @@
+name: Build Icon Sync Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android-apk.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android-apk.yml'
+  workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Build release APK (uses signing secrets if configured)'
+        required: false
+        default: 'true'
+        type: boolean
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Test, Lint & Assemble Icon Sync APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Run Kotlin unit tests (GridRemapperTest)
+        working-directory: android
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Run Android Lint
+        working-directory: android
+        run: gradle lintDebug --stacktrace
+
+      - name: Assemble Debug APK (IconSync)
+        working-directory: android
+        run: gradle assembleDebug --stacktrace
+
+      - name: Check signing secrets availability
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ICONSYNC_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ICONSYNC_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ICONSYNC_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ICONSYNC_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decode release keystore & assemble signed Release APK
+        if: steps.signing.outputs.available == 'true' && (github.event_name != 'pull_request')
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.ICONSYNC_KEYSTORE_BASE64 }}
+          ICONSYNC_KEYSTORE_PASSWORD: ${{ secrets.ICONSYNC_KEYSTORE_PASSWORD }}
+          ICONSYNC_KEY_ALIAS: ${{ secrets.ICONSYNC_KEY_ALIAS }}
+          ICONSYNC_KEY_PASSWORD: ${{ secrets.ICONSYNC_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/iconsync-release.jks"
+          export ICONSYNC_KEYSTORE_PATH="$RUNNER_TEMP/iconsync-release.jks"
+          gradle assembleRelease --stacktrace
+          rm -f "$RUNNER_TEMP/iconsync-release.jks"
+
+      - name: Generate SHA-256 checksums for built APKs
+        working-directory: android/app/build/outputs/apk
+        run: |
+          find . -type f -name '*.apk' -print0 | xargs -0 sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload Debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IconSync-debug-apk
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Release APK artifact (if signed)
+        if: steps.signing.outputs.available == 'true' && (github.event_name != 'pull_request')
+        uses: actions/upload-artifact@v4
+        with:
+          name: IconSync-release-apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/SHA256SUMS.txt
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload Android Lint & Unit Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: IconSync-android-reports
+          path: |
+            android/app/build/reports/tests/testDebugUnitTest/
+            android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14

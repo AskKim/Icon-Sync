@@ -30,6 +30,7 @@ interface PhoneCanvasProps {
   onSelect: (target: SelectionTarget) => void;
   onQuickWidgetInteract: (widget: WidgetItem) => void;
   onExtractAppFromFolder: (folderId: string, appId: string) => void;
+  onMarkPackageInstalled?: (packageName: string) => void;
 }
 
 export function PhoneCanvas({
@@ -42,6 +43,7 @@ export function PhoneCanvas({
   onSelect,
   onQuickWidgetInteract,
   onExtractAppFromFolder,
+  onMarkPackageInstalled,
 }: PhoneCanvasProps) {
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [wallpaperFailed, setWallpaperFailed] = useState(false);
@@ -69,6 +71,17 @@ export function PhoneCanvas({
   }
 
   const isTablet = device.formFactor === 'tablet';
+  const isDenseGrid = device.gridCols >= 6 || device.gridRows >= 6;
+  const outOfBoundsCount =
+    currentScreen.icons.filter((i) => i.col >= device.gridCols || i.row >= device.gridRows).length +
+    currentScreen.folders.filter((f) => f.col >= device.gridCols || f.row >= device.gridRows).length +
+    currentScreen.widgets.filter(
+      (w) =>
+        w.col >= device.gridCols ||
+        w.row >= device.gridRows ||
+        w.col + w.spanX > device.gridCols ||
+        w.row + w.spanY > device.gridRows
+    ).length;
 
   return (
     <div className="flex flex-col items-center">
@@ -172,12 +185,17 @@ export function PhoneCanvas({
           </div>
 
           {/* Interactive Launcher Grid */}
-          <div className="relative z-10 flex-1 px-3.5 py-1.5 flex flex-col">
+          <div className="relative z-10 flex-1 px-3 py-1.5 flex flex-col">
+            {outOfBoundsCount > 0 && (
+              <div className="mb-1.5 px-2.5 py-1 rounded-lg bg-[#FEF2F2]/95 border border-[#FECACA] text-[10px] font-medium text-[#991B1B] text-center">
+                {outOfBoundsCount} item{outOfBoundsCount === 1 ? '' : 's'} outside {device.gridCols}×{device.gridRows} bounds — open Developer Tools to auto-fix
+              </div>
+            )}
             <div
-              className="grid gap-2 flex-1"
+              className={`grid flex-1 ${isDenseGrid ? 'gap-1' : 'gap-2'}`}
               style={{
                 gridTemplateColumns: `repeat(${device.gridCols}, minmax(0, 1fr))`,
-                gridTemplateRows: `repeat(${device.gridRows}, minmax(68px, 1fr))`,
+                gridTemplateRows: `repeat(${device.gridRows}, minmax(${device.gridRows >= 6 ? '54px' : '68px'}, 1fr))`,
               }}
             >
               {/* Clickable empty grid cells */}
@@ -211,92 +229,118 @@ export function PhoneCanvas({
               })}
 
               {/* App Widgets */}
-              {currentScreen.widgets.map((widget) => (
-                <div
-                  key={widget.id}
-                  style={{
-                    gridColumn: `${widget.col + 1} / span ${Math.min(widget.spanX, device.gridCols - widget.col)}`,
-                    gridRow: `${widget.row + 1} / span ${Math.min(widget.spanY, device.gridRows - widget.row)}`,
-                  }}
-                >
-                  <AndroidWidgetTile
-                    widget={widget}
-                    isSelected={selection.type === 'widget' && selection.id === widget.id}
-                    onSelect={() => {
-                      setOpenFolderId(null);
-                      onSelect({ type: 'widget', id: widget.id });
+              {currentScreen.widgets
+                .filter((w) => w.col < device.gridCols && w.row < device.gridRows)
+                .map((widget) => (
+                  <div
+                    key={widget.id}
+                    style={{
+                      gridColumn: `${widget.col + 1} / span ${Math.max(1, Math.min(widget.spanX, device.gridCols - widget.col))}`,
+                      gridRow: `${widget.row + 1} / span ${Math.max(1, Math.min(widget.spanY, device.gridRows - widget.row))}`,
                     }}
-                    onQuickInteract={onQuickWidgetInteract}
-                  />
-                </div>
-              ))}
+                  >
+                    <AndroidWidgetTile
+                      widget={widget}
+                      isSelected={selection.type === 'widget' && selection.id === widget.id}
+                      onSelect={() => {
+                        setOpenFolderId(null);
+                        onSelect({ type: 'widget', id: widget.id });
+                      }}
+                      onQuickInteract={onQuickWidgetInteract}
+                    />
+                  </div>
+                ))}
 
               {/* App Icons */}
-              {currentScreen.icons.map((icon) => {
-                const isSelected = selection.type === 'icon' && selection.id === icon.id;
-                return (
-                  <button
-                    key={icon.id}
-                    type="button"
-                    onClick={() => {
-                      setOpenFolderId(null);
-                      onSelect({ type: 'icon', id: icon.id });
-                    }}
-                    style={{
-                      gridColumn: `${icon.col + 1} / span 1`,
-                      gridRow: `${icon.row + 1} / span 1`,
-                    }}
-                    className={`flex flex-col items-center justify-center gap-1 rounded-2xl p-1 transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-white/20 ring-2 ring-[#4ADE80]'
-                        : 'hover:bg-white/10'
-                    }`}
-                  >
-                    <AndroidIcon iconKey={icon.iconKey} tint={icon.tint} size="md" />
-                    <span className="text-[11px] font-medium text-white leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] truncate w-full text-center">
-                      {icon.label}
-                    </span>
-                  </button>
-                );
-              })}
+              {currentScreen.icons
+                .filter((ic) => ic.col < device.gridCols && ic.row < device.gridRows)
+                .map((icon) => {
+                  const isSelected = selection.type === 'icon' && selection.id === icon.id;
+                  return (
+                    <button
+                      key={icon.id}
+                      type="button"
+                      onClick={() => {
+                        setOpenFolderId(null);
+                        onSelect({ type: 'icon', id: icon.id });
+                      }}
+                      style={{
+                        gridColumn: `${icon.col + 1} / span 1`,
+                        gridRow: `${icon.row + 1} / span 1`,
+                      }}
+                      className={`flex flex-col items-center justify-center gap-0.5 rounded-2xl p-0.5 transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-white/20 ring-2 ring-[#4ADE80]'
+                          : 'hover:bg-white/10'
+                      }`}
+                    >
+                      <AndroidIcon
+                        iconKey={icon.iconKey}
+                        tint={icon.tint}
+                        size={device.gridCols >= 6 ? 'sm' : 'md'}
+                        isPlaceholder={Boolean(icon.isPlaceholder)}
+                      />
+                      <span
+                        className={`${
+                          device.gridCols >= 6 ? 'text-[9px]' : 'text-[11px]'
+                        } font-medium leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] truncate w-full text-center ${
+                          icon.isPlaceholder ? 'text-white/75 italic' : 'text-white'
+                        }`}
+                      >
+                        {icon.label}
+                      </span>
+                    </button>
+                  );
+                })}
 
               {/* Icon Folders */}
-              {currentScreen.folders.map((folder) => {
-                const isSelected = selection.type === 'folder' && selection.id === folder.id;
-                return (
-                  <button
-                    key={folder.id}
-                    type="button"
-                    onClick={() => {
-                      onSelect({ type: 'folder', id: folder.id });
-                      setOpenFolderId(folder.id);
-                    }}
-                    style={{
-                      gridColumn: `${folder.col + 1} / span 1`,
-                      gridRow: `${folder.row + 1} / span 1`,
-                    }}
-                    className={`flex flex-col items-center justify-center gap-1 rounded-2xl p-1 transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-white/20 ring-2 ring-[#4ADE80]'
-                        : 'hover:bg-white/10'
-                    }`}
-                  >
-                    <div className="w-11 h-11 rounded-[15px] bg-white/25 backdrop-blur-md border border-white/30 p-1.5 grid grid-cols-2 gap-1 place-items-center shadow-sm">
-                      {folder.apps.slice(0, 4).map((app) => (
-                        <AndroidIcon
-                          key={app.id}
-                          iconKey={app.iconKey}
-                          tint={app.tint}
-                          size="xs"
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[11px] font-medium text-white leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] truncate w-full text-center">
-                      {folder.name}
-                    </span>
-                  </button>
-                );
-              })}
+              {currentScreen.folders
+                .filter((f) => f.col < device.gridCols && f.row < device.gridRows)
+                .map((folder) => {
+                  const isSelected = selection.type === 'folder' && selection.id === folder.id;
+                  return (
+                    <button
+                      key={folder.id}
+                      type="button"
+                      onClick={() => {
+                        onSelect({ type: 'folder', id: folder.id });
+                        setOpenFolderId(folder.id);
+                      }}
+                      style={{
+                        gridColumn: `${folder.col + 1} / span 1`,
+                        gridRow: `${folder.row + 1} / span 1`,
+                      }}
+                      className={`flex flex-col items-center justify-center gap-0.5 rounded-2xl p-0.5 transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-white/20 ring-2 ring-[#4ADE80]'
+                          : 'hover:bg-white/10'
+                      }`}
+                    >
+                      <div
+                        className={`${
+                          device.gridCols >= 6 ? 'w-9 h-9 rounded-[12px] p-1' : 'w-11 h-11 rounded-[15px] p-1.5'
+                        } bg-white/25 backdrop-blur-md border border-white/30 grid grid-cols-2 gap-0.5 place-items-center shadow-sm`}
+                      >
+                        {folder.apps.slice(0, 4).map((app) => (
+                          <AndroidIcon
+                            key={app.id}
+                            iconKey={app.iconKey}
+                            tint={app.tint}
+                            size="xs"
+                            isPlaceholder={Boolean(app.isPlaceholder)}
+                          />
+                        ))}
+                      </div>
+                      <span
+                        className={`${
+                          device.gridCols >= 6 ? 'text-[9px]' : 'text-[11px]'
+                        } font-medium text-white leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] truncate w-full text-center`}
+                      >
+                        {folder.name}
+                      </span>
+                    </button>
+                  );
+                })}
             </div>
           </div>
 
@@ -362,7 +406,12 @@ export function PhoneCanvas({
                       : ''
                   }`}
                 >
-                  <AndroidIcon iconKey={app.iconKey} tint={app.tint} size="md" />
+                  <AndroidIcon
+                    iconKey={app.iconKey}
+                    tint={app.tint}
+                    size="md"
+                    isPlaceholder={Boolean(app.isPlaceholder)}
+                  />
                 </button>
               ))}
             </div>
@@ -415,18 +464,37 @@ export function PhoneCanvas({
                       key={app.id}
                       className="flex flex-col items-center gap-1.5 group relative"
                     >
-                      <AndroidIcon iconKey={app.iconKey} tint={app.tint} size="md" />
-                      <span className="text-[11px] text-white/90 truncate w-full text-center">
+                      <AndroidIcon
+                        iconKey={app.iconKey}
+                        tint={app.tint}
+                        size="md"
+                        isPlaceholder={Boolean(app.isPlaceholder)}
+                      />
+                      <span
+                        className={`text-[11px] truncate w-full text-center ${
+                          app.isPlaceholder ? 'text-white/70 italic' : 'text-white/90'
+                        }`}
+                      >
                         {app.label}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => onExtractAppFromFolder(openFolder.id, app.id)}
-                        title="Move out to home screen"
-                        className="text-[10px] text-emerald-300 hover:text-emerald-200 underline cursor-pointer"
-                      >
-                        Move out
-                      </button>
+                      {app.isPlaceholder && onMarkPackageInstalled ? (
+                        <button
+                          type="button"
+                          onClick={() => onMarkPackageInstalled(app.packageName)}
+                          className="text-[10px] text-amber-300 hover:text-amber-200 underline cursor-pointer"
+                        >
+                          Install
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onExtractAppFromFolder(openFolder.id, app.id)}
+                          title="Move out to home screen"
+                          className="text-[10px] text-emerald-300 hover:text-emerald-200 underline cursor-pointer"
+                        >
+                          Move out
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
