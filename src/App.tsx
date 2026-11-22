@@ -23,7 +23,7 @@
  * lives in `src/services/cloudApi.ts`. See `ARCHITECTURE.md` for a full map.
  */
 
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   Cloud,
@@ -94,46 +94,14 @@ import {
 import { PhoneCanvas } from './components/PhoneCanvas';
 import { InspectorPanel } from './components/InspectorPanel';
 import { FeedbackBanner } from './components/FeedbackBanner';
-
-// Lazy-load secondary tabs and on-demand modals so initial boot only parses Screens studio
-const BackupsView = lazy(() =>
-  import('./components/BackupsView').then((m) => ({ default: m.BackupsView }))
-);
-const WidgetSyncView = lazy(() =>
-  import('./components/WidgetSyncView').then((m) => ({ default: m.WidgetSyncView }))
-);
-const HowItWorksView = lazy(() =>
-  import('./components/HowItWorksView').then((m) => ({ default: m.HowItWorksView }))
-);
-const DeveloperToolsView = lazy(() =>
-  import('./components/DeveloperToolsView').then((m) => ({ default: m.DeveloperToolsView }))
-);
-const BackupExportModal = lazy(() =>
-  import('./components/BackupExportModal').then((m) => ({ default: m.BackupExportModal }))
-);
-const ImportRestoreModal = lazy(() =>
-  import('./components/ImportRestoreModal').then((m) => ({ default: m.ImportRestoreModal }))
-);
-const MissingAppsModal = lazy(() =>
-  import('./components/MissingAppsModal').then((m) => ({ default: m.MissingAppsModal }))
-);
-const AddDeviceModal = lazy(() =>
-  import('./components/AddDeviceModal').then((m) => ({ default: m.AddDeviceModal }))
-);
-
-function TabLoadingFallback() {
-  return (
-    <div className="bg-white border border-[#E4E7EC] rounded-2xl p-8 space-y-4 animate-pulse">
-      <div className="h-6 w-56 bg-[#ECEEF2] rounded-md" />
-      <div className="h-4 w-96 max-w-full bg-[#F3F4F6] rounded-md" />
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-        <div className="h-28 bg-[#F9FAFB] border border-[#F1F3F6] rounded-xl" />
-        <div className="h-28 bg-[#F9FAFB] border border-[#F1F3F6] rounded-xl" />
-        <div className="h-28 bg-[#F9FAFB] border border-[#F1F3F6] rounded-xl" />
-      </div>
-    </div>
-  );
-}
+import { BackupsView } from './components/BackupsView';
+import { WidgetSyncView } from './components/WidgetSyncView';
+import { HowItWorksView } from './components/HowItWorksView';
+import { DeveloperToolsView } from './components/DeveloperToolsView';
+import { BackupExportModal } from './components/BackupExportModal';
+import { ImportRestoreModal } from './components/ImportRestoreModal';
+import { MissingAppsModal } from './components/MissingAppsModal';
+import { AddDeviceModal } from './components/AddDeviceModal';
 
 type ActiveTab = 'screens' | 'backups' | 'widgets' | 'how-it-works' | 'developer';
 
@@ -2283,7 +2251,7 @@ export default function App() {
         )}
 
         {activeTab !== 'screens' && (
-          <Suspense fallback={<TabLoadingFallback />}>
+          <>
             {activeTab === 'backups' && (
               <BackupsView
                 backups={backups}
@@ -2344,7 +2312,7 @@ export default function App() {
                 }
               />
             )}
-          </Suspense>
+          </>
         )}
       </main>
 
@@ -2374,78 +2342,70 @@ export default function App() {
 
       {/* Save / Export Layout Modal */}
       {showExportModal && (
-        <Suspense fallback={null}>
-          <BackupExportModal
-            device={activeDevice}
-            onClose={() => setShowExportModal(false)}
-            onConfirmExport={handleConfirmExport}
-          />
-        </Suspense>
+        <BackupExportModal
+          device={activeDevice}
+          onClose={() => setShowExportModal(false)}
+          onConfirmExport={handleConfirmExport}
+        />
       )}
 
       {/* Register Custom Device / Mini Launcher Modal */}
       {showAddDeviceModal && (
-        <Suspense fallback={null}>
-          <AddDeviceModal
-            onClose={() => setShowAddDeviceModal(false)}
-            onCreateDevice={handleCreateCustomDevice}
-          />
-        </Suspense>
+        <AddDeviceModal
+          onClose={() => setShowAddDeviceModal(false)}
+          onCreateDevice={handleCreateCustomDevice}
+        />
       )}
 
       {/* Import & Restore (Replace vs Merge + Cross-Grid Strategy) Modal */}
       {importModalState.open && (
-        <Suspense fallback={null}>
-          <ImportRestoreModal
-            devices={devices}
-            initialTargetDeviceId={activeDevice.id}
-            backups={backups}
-            initialBackupId={importModalState.backupId}
-            onClose={() => setImportModalState({ open: false })}
-            onApplyRestore={handleApplyRestore}
-            onReportTargetGrid={(deviceId, cols, rows) =>
-              handleChangeDeviceGrid(cols, rows, deviceId)
-            }
-            onDownloadSampleBackup={() => {
-              const sample = backups[0];
-              if (sample) downloadBackupJson(sample);
-            }}
-          />
-        </Suspense>
+        <ImportRestoreModal
+          devices={devices}
+          initialTargetDeviceId={activeDevice.id}
+          backups={backups}
+          initialBackupId={importModalState.backupId}
+          onClose={() => setImportModalState({ open: false })}
+          onApplyRestore={handleApplyRestore}
+          onReportTargetGrid={(deviceId, cols, rows) =>
+            handleChangeDeviceGrid(cols, rows, deviceId)
+          }
+          onDownloadSampleBackup={() => {
+            const sample = backups[0];
+            if (sample) downloadBackupJson(sample);
+          }}
+        />
       )}
 
       {/* Post-Import Missing Apps Walkthrough & Play Store Link File Export Modal */}
       {missingAppsSession && missingAppsSession.modalOpen && (
-        <Suspense fallback={null}>
-          <MissingAppsModal
-            targetDeviceName={missingAppsSession.targetDeviceName}
-            backupName={missingAppsSession.backupName}
-            missingApps={missingAppsSession.missingApps}
-            installedPackages={
-              devices.find((d) => d.id === missingAppsSession.deviceId)?.installedPackages ?? []
-            }
-            initialView={missingAppsSession.initialView}
-            onMarkInstalled={(pkg) =>
-              handleMarkPackageInstalled(pkg, missingAppsSession.deviceId)
-            }
-            onDownloadFile={(format) => {
-              downloadMissingAppsFile(
-                missingAppsSession.targetDeviceName,
-                missingAppsSession.backupName,
-                missingAppsSession.missingApps,
-                format
-              );
-              pushFeedback({
-                severity: 'success',
-                title: `Downloaded Play Store install list (.${format})`,
-                message: `Saved ${missingAppsSession.missingApps.length} missing app link(s) for ${missingAppsSession.targetDeviceName}.`,
-              });
-            }}
-            onClose={() =>
-              setMissingAppsSession((prev) => (prev ? { ...prev, modalOpen: false } : null))
-            }
-          />
-        </Suspense>
+        <MissingAppsModal
+          targetDeviceName={missingAppsSession.targetDeviceName}
+          backupName={missingAppsSession.backupName}
+          missingApps={missingAppsSession.missingApps}
+          installedPackages={
+            devices.find((d) => d.id === missingAppsSession.deviceId)?.installedPackages ?? []
+          }
+          initialView={missingAppsSession.initialView}
+          onMarkInstalled={(pkg) =>
+            handleMarkPackageInstalled(pkg, missingAppsSession.deviceId)
+          }
+          onDownloadFile={(format) => {
+            downloadMissingAppsFile(
+              missingAppsSession.targetDeviceName,
+              missingAppsSession.backupName,
+              missingAppsSession.missingApps,
+              format
+            );
+            pushFeedback({
+              severity: 'success',
+              title: `Downloaded Play Store install list (.${format})`,
+              message: `Saved ${missingAppsSession.missingApps.length} missing app link(s) for ${missingAppsSession.targetDeviceName}.`,
+            });
+          }}
+          onClose={() =>
+            setMissingAppsSession((prev) => (prev ? { ...prev, modalOpen: false } : null))
+          }
+        />
       )}
     </div>
   );
