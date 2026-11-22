@@ -113,7 +113,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Debug APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: IconSync-debug-apk
           path: |
@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload Release APK artifact (if signed)
         if: steps.signing.outputs.available == 'true' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.build_release)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: IconSync-release-apk
           path: |
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload Android Lint & Unit Test Reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: IconSync-android-reports
           path: |
