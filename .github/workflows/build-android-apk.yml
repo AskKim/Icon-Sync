@@ -42,6 +42,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0 platforms;android-35
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -72,6 +74,7 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release signing secrets (ICONSYNC_KEYSTORE_*) are not configured; skipping signed Release APK and publishing Debug APK only."
           fi
 
       - name: Decode release keystore & assemble signed Release APK
@@ -83,16 +86,31 @@ jobs:
           ICONSYNC_KEY_ALIAS: ${{ secrets.ICONSYNC_KEY_ALIAS }}
           ICONSYNC_KEY_PASSWORD: ${{ secrets.ICONSYNC_KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/iconsync-release.jks"
-          export ICONSYNC_KEYSTORE_PATH="$RUNNER_TEMP/iconsync-release.jks"
+          KEYSTORE_FILE="$RUNNER_TEMP/iconsync-release.jks"
+          trap 'rm -f "$KEYSTORE_FILE"' EXIT
+          printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_FILE"
+          if [ ! -s "$KEYSTORE_FILE" ]; then
+            echo "::error::Decoded ICONSYNC_KEYSTORE_BASE64 is empty."
+            exit 1
+          fi
+          export ICONSYNC_KEYSTORE_PATH="$KEYSTORE_FILE"
           gradle assembleRelease --stacktrace
-          rm -f "$RUNNER_TEMP/iconsync-release.jks"
 
       - name: Generate SHA-256 checksums for built APKs
         working-directory: android/app/build/outputs/apk
         run: |
-          find . -type f -name '*.apk' -print0 | xargs -0 sha256sum > SHA256SUMS.txt
+          find . -type f -name '*.apk' -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt
+          if [ ! -s SHA256SUMS.txt ]; then
+            echo "::error::No APK files were generated."
+            exit 1
+          fi
           cat SHA256SUMS.txt
+          {
+            echo "### Built Icon Sync APKs"
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4

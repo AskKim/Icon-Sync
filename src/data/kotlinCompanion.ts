@@ -515,12 +515,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0 platforms;android-35
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
       - name: Run Kotlin Unit Tests & Assemble Debug APK
         working-directory: android
-        run: gradle testDebugUnitTest assembleDebug --stacktrace
+        run: gradle testDebugUnitTest lintDebug assembleDebug --stacktrace
       - name: Upload IconSync Debug APK
         uses: actions/upload-artifact@v4
         with:
