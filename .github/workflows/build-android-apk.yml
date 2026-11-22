@@ -52,15 +52,15 @@ jobs:
 
       - name: Run Kotlin unit tests (GridRemapperTest)
         working-directory: android
-        run: gradle testDebugUnitTest --stacktrace
+        run: gradle testDebugUnitTest --stacktrace --console=plain
 
       - name: Run Android Lint
         working-directory: android
-        run: gradle lintDebug --stacktrace
+        run: gradle lintDebug --stacktrace --console=plain
 
       - name: Assemble Debug APK (IconSync)
         working-directory: android
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace --console=plain
 
       - name: Check signing secrets availability
         id: signing
@@ -94,7 +94,7 @@ jobs:
             exit 1
           fi
           export ICONSYNC_KEYSTORE_PATH="$KEYSTORE_FILE"
-          gradle assembleRelease --stacktrace
+          gradle assembleRelease --stacktrace --console=plain
 
       - name: Generate SHA-256 checksums for built APKs
         working-directory: android/app/build/outputs/apk

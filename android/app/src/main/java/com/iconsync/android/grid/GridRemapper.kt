@@ -74,7 +74,9 @@ object GridRemapper {
                 )
 
                 if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS) {
-                    if (w.col + clampedSpanX <= effectiveCols &&
+                    if (w.col >= 0 &&
+                        w.row >= 0 &&
+                        w.col + clampedSpanX <= effectiveCols &&
                         w.row + clampedSpanY <= effectiveRows &&
                         canPlace(grid, w.col, w.row, clampedSpanX, clampedSpanY, effectiveCols, effectiveRows)
                     ) {
@@ -111,7 +113,7 @@ object GridRemapper {
             // 2. Folders
             for (f in page.folders) {
                 if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS) {
-                    if (f.col < effectiveCols && f.row < effectiveRows && !grid[f.row][f.col]) {
+                    if (f.col in 0 until effectiveCols && f.row in 0 until effectiveRows && !grid[f.row][f.col]) {
                         grid[f.row][f.col] = true
                         placedFolders += f
                     } else {
@@ -145,7 +147,7 @@ object GridRemapper {
             // 3. Icons
             for (ic in page.icons) {
                 if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS) {
-                    if (ic.col < effectiveCols && ic.row < effectiveRows && !grid[ic.row][ic.col]) {
+                    if (ic.col in 0 until effectiveCols && ic.row in 0 until effectiveRows && !grid[ic.row][ic.col]) {
                         grid[ic.row][ic.col] = true
                         placedIcons += ic
                     } else {

@@ -74,6 +74,10 @@ android {
         warningsAsErrors = false
         checkReleaseBuilds = false
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 base {
