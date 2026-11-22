@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.iconsync.android
 
 import com.iconsync.android.grid.GridRemapper
@@ -130,5 +131,24 @@ class GridRemapperTest {
         assertEquals(0, result.relocatedCount)
         assertEquals(0, result.widgetsResized)
         assertEquals(1, result.screens.size)
+    }
+
+    @Test
+    fun preservePagesCreatesSiblingContinuationPagesWithZeroLoss() {
+        val source = listOf(buildDenseSixBySixPage())
+        val result = GridRemapper.remapPages(
+            sourcePages = source,
+            sourceCols = 6,
+            sourceRows = 6,
+            targetCols = 5,
+            targetRows = 4,
+            strategy = GridAdaptationStrategy.PRESERVE_PAGES
+        )
+
+        assertEquals(24, result.screens.sumOf { it.icons.size })
+        assertEquals(1, result.screens.sumOf { it.widgets.size })
+        assertEquals(0, result.droppedByCrop)
+        assertTrue("Expected sibling continuation page", result.overflowPagesAdded >= 1)
+        assertTrue(result.screens.any { it.name.contains("(Cont.)") })
     }
 }

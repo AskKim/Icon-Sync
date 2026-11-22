@@ -1,9 +1,9 @@
 {
   "name": "icon-sync",
-  "description": "Android home screen layout backup, cross-grid (6x6 to 5x4) adaptation, Replace/Merge restore, widget sync studio, developer diagnostics, and native Android APK.",
-  "license": "GPL-3.0-or-later",
+  "description": "Open-source (AGPL-3.0+) Android home screen layout backup, cross-grid (6x6 to 5x4) adaptation, Replace/Merge restore, widget sync studio, developer diagnostics, and native Android APK.",
+  "license": "AGPL-3.0-or-later",
   "private": true,
-  "version": "2.3.0",
+  "version": "0.1.0-alpha.1",
   "keywords": [
     "android",
     "launcher",
@@ -13,7 +13,7 @@
     "grid-remapping",
     "widget-sync",
     "apk",
-    "gpl-3.0"
+    "agpl-3.0"
   ],
   "type": "module",
   "scripts": {

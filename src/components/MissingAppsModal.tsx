@@ -1,8 +1,8 @@
 /**
  * @file src/components/MissingAppsModal.tsx
- * @license GPL-3.0-or-later
+ * @license AGPL-3.0-or-later
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Guides users through installing apps that were present in an imported backup
  * but missing from the target Android phone, using strictly validated Play Store URLs.

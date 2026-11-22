@@ -486,8 +486,9 @@ class WidgetSyncWorker(
     filename: 'build-android-apk.yml',
     path: '.github/workflows/build-android-apk.yml',
     language: 'yaml',
-    summary: 'GitHub Actions workflow that compiles, lints, tests, and uploads the Icon Sync Android APK (IconSync-v*-debug.apk & optional signed release APK).',
-    content: `name: Build Icon Sync Android APK
+    summary: 'GitHub Actions workflow that verifies Android SDK 35, runs Kotlin tests & lint, assembles IconSync-v0.1.0-alpha.1-debug.apk (& optional signed release APK), and publishes SHA256SUMS.txt.',
+    content: `# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Build Icon Sync Android APK
 
 on:
   push:
@@ -498,10 +499,11 @@ on:
   pull_request:
     paths:
       - 'android/**'
+      - '.github/workflows/build-android-apk.yml'
   workflow_dispatch:
     inputs:
       build_release:
-        description: 'Build release APK (uses signing secrets if configured)'
+        description: 'Build signed release APK when ICONSYNC_KEYSTORE_* secrets are configured'
         required: false
         default: true
         type: boolean
@@ -515,19 +517,31 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools build-tools;35.0.0 platforms;android-35
+      - name: Verify & install Android SDK 35 components
+        run: |
+          set -euo pipefail
+          SDK_ROOT="\${ANDROID_HOME:-\${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=\$SDK_ROOT" >> "\$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=\$SDK_ROOT" >> "\$GITHUB_ENV"
+          SDKMANAGER="\$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "\$SDKMANAGER" --sdk_root="\$SDK_ROOT" --licenses >/dev/null || true
+          "\$SDKMANAGER" --sdk_root="\$SDK_ROOT" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          test -f "\$SDK_ROOT/platforms/android-35/android.jar"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+          build-root-directory: android
       - name: Run Kotlin Unit Tests & Assemble Debug APK
         working-directory: android
-        run: gradle testDebugUnitTest lintDebug assembleDebug --stacktrace
+        run: |
+          gradle testDebugUnitTest --no-daemon --stacktrace --console=plain
+          gradle assembleDebug --no-daemon --stacktrace --console=plain
       - name: Upload IconSync Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: IconSync-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk`,
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/SHA256SUMS.txt`,
   },
 ];

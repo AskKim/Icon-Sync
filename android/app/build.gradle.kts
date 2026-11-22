@@ -1,12 +1,15 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    base
 }
 
-val appVersionName = "2.3.0"
-val appVersionCode = 230
+val appVersionName = "0.1.0-alpha.1"
+val appVersionCode = 1
 
 android {
     namespace = "com.iconsync.android"
@@ -65,10 +68,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     lint {
         abortOnError = false
         warningsAsErrors = false
@@ -77,6 +76,12 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 

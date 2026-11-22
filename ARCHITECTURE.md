@@ -1,7 +1,8 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 # Icon Sync — Architecture & Beginner-Friendly Codebase Guide
 
+> **Release:** `v0.1.0-alpha.1` (Alpha 0.1) · **License:** `AGPL-3.0-or-later`  
 > **Who is this guide for?**  
 > Both **first-time / novice coders** opening this project for the first time *and* **AI coding assistants** looking for an accurate, zero-guesswork map of how every file connects.
 
@@ -27,9 +28,19 @@ Think of **Icon Sync** as a visual spreadsheet editor for Android phone home scr
 .
 ├── server.ts                         # Express web host (Port 3000) + local JSON vault API
 ├── index.html                        # HTML page shell, fonts, and page title
-├── package.json                      # Dependencies, npm scripts, and GPL-3.0-or-later metadata
+├── package.json                      # Dependencies, npm scripts, v0.1.0-alpha.1 & AGPL-3.0-or-later
+├── .editorconfig                     # Consistent formatting for TS, Kotlin, XML, YAML & Markdown
+├── LICENSE                           # Full GNU Affero General Public License v3.0 (AGPL-3.0-or-later)
+├── NOTICE.md                         # Copyright, AGPL Section 13 network-source notice & attributions
+├── PRIVACY.md                        # Plain-English Privacy Policy & Android permissions disclosure
+├── DATA_MAP.md                       # Field-level Privacy Data Map & Google Play Data Safety matrix
+├── SECURITY.md                       # Security architecture, self-hosting guide & disclosure process
 ├── ARCHITECTURE.md                   # You are here! Map for beginners & AI readers
-├── LICENSE                           # GNU GPL v3.0 or later (GPL-3.0-or-later)
+├── CONTRIBUTING.md                   # Development setup, checklist & AGPL-3.0 contribution terms
+├── CODE_OF_CONDUCT.md                # Community standards & reporting process
+├── SUPPORT.md                        # Troubleshooting, APK sideloading & issue links
+├── CHANGELOG.md                      # Versioned release history
+├── RELEASE_NOTES_v0.1.0-alpha.1.md   # Alpha 0.1 GitHub Release notes
 │
 ├── src/
 │   ├── main.tsx                      # React entry point (mounts <App /> into #root)
@@ -71,9 +82,10 @@ Think of **Icon Sync** as a visual spreadsheet editor for Android phone home scr
 │
 ├── android/                          # Real buildable Gradle + Kotlin Android APK project
 │   ├── settings.gradle.kts           # Project name ("IconSync") & module registry
-│   ├── build.gradle.kts              # Android Gradle Plugin 8.7.2 & Kotlin 2.0.21 setup
+│   ├── build.gradle.kts              # Android Gradle Plugin 8.7.3 & Kotlin 2.0.21 setup
+│   ├── gradle.properties             # CI-tuned JVM heap, parallel & caching configuration
 │   └── app/
-│       ├── build.gradle.kts          # Package `com.iconsync.android`, APK naming, signing
+│       ├── build.gradle.kts          # Package `com.iconsync.android`, v0.1.0-alpha.1, signing
 │       └── src/
 │           ├── main/java/com/iconsync/android/
 │           │   ├── MainActivity.kt               # Native grid detector & backup export screen
@@ -84,16 +96,21 @@ Think of **Icon Sync** as a visual spreadsheet editor for Android phone home scr
 │           │   ├── service/LauncherGridAccessibilityService.kt
 │           │   └── worker/WidgetSyncWorker.kt    # WorkManager background sync task
 │           └── test/java/com/iconsync/android/
-│               └── GridRemapperTest.kt           # JUnit tests verifying 6x6 -> 5x4 strategies
+│               └── GridRemapperTest.kt           # JUnit tests verifying all 5 6x6 -> 5x4 strategies
 │
-└── .github/                          # Automated CI/CD, security scanning & metadata sync
+└── .github/                          # Automated CI/CD, security scanning & GitHub optimization
+    ├── repo-metadata.json            # Single source of truth for description, topics, settings, labels
     ├── dependabot.yml                # Weekly npm, Gradle & GitHub Actions dependency updates
+    ├── CODEOWNERS                    # Review ownership template
+    ├── FUNDING.yml                   # Optional sponsor configuration template
+    ├── PULL_REQUEST_TEMPLATE.md      # Verification & AGPL-3.0 PR checklist
+    ├── ISSUE_TEMPLATE/               # Structured YAML forms (bug, feature, launcher grid, config)
     └── workflows/
-        ├── build-android-apk.yml     # Runs Kotlin tests, Android Lint & builds IconSync APK
+        ├── build-android-apk.yml     # Deterministic SDK 35 setup, Kotlin tests, Lint & IconSync APK
         ├── ci-web.yml                # Typechecks, builds web bundle & smoke-tests server.ts
-        ├── release.yml               # Publishes tagged GitHub Releases with APK + SHA256SUMS
+        ├── release.yml               # Publishes Alpha/Stable GitHub Releases with APK + SHA256SUMS
         ├── codeql-security.yml       # CodeQL static analysis + production npm audit
-        └── sync-repo-metadata.yml    # One-click GitHub repository description & topics updater
+        └── sync-repo-metadata.yml    # Syncs GitHub description, topics, merge hygiene & labels
 ```
 
 ---
@@ -137,6 +154,7 @@ When you open **Import / Restore** and choose a `6×6` backup (36 cells/page) ta
 | Add a new API endpoint | `server.ts` | Inside `startServer()`, above the Vite middleware block |
 | Add a new diagnostic check to the Workspace Integrity Auditor | `src/engine/layoutEngine.ts` | `auditWorkspaceIntegrity()` |
 | Change APK version number or package ID | `android/app/build.gradle.kts` | `appVersionName`, `appVersionCode`, `applicationId` |
+| Update GitHub description, topics, or labels | `.github/repo-metadata.json` | Push to `main` or run `Sync & Optimize GitHub Repository Metadata` |
 
 ---
 

@@ -1,8 +1,8 @@
 /**
  * @file src/components/AddDeviceModal.tsx
- * @license GPL-3.0-or-later
+ * @license AGPL-3.0-or-later
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * ============================================================================
  * ADD CUSTOM ANDROID DEVICE / LAUNCHER PROFILE MODAL

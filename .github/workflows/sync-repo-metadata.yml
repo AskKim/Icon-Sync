@@ -1,38 +1,127 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-name: Sync GitHub Repository Description & Topics
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Sync & Optimize GitHub Repository Metadata
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/repo-metadata.json'
+      - '.github/workflows/sync-repo-metadata.yml'
   workflow_dispatch:
     inputs:
       description:
-        description: 'GitHub repository description'
+        description: 'Override GitHub repository description (leave empty to use .github/repo-metadata.json)'
         required: false
-        default: 'Icon Sync — Open-source (GPL-3.0+) Android home screen layout backup, cross-grid (6x6 to 5x4) adaptation, Replace/Merge restore, widget sync studio, developer diagnostics & Android APK.'
+        default: ''
         type: string
+      homepage:
+        description: 'Override GitHub repository homepage URL (leave empty to use .github/repo-metadata.json)'
+        required: false
+        default: ''
+        type: string
+      sync_labels:
+        description: 'Synchronize standard color-coded Issue & PR labels'
+        required: false
+        default: true
+        type: boolean
+      optimize_settings:
+        description: 'Apply recommended merge & repository hygiene settings (squash/rebase, auto-delete branches)'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
-  update-metadata:
-    name: Update GitHub Repo Description & Topics
+  sync-metadata:
+    name: Update Description, Topics, Settings & Labels
     runs-on: ubuntu-latest
 
     steps:
-      - name: Update repository description and topics via GitHub CLI
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync repository description, homepage, topics & settings
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO_DESC: ${{ github.event.inputs.description }}
+          GH_TOKEN: ${{ secrets.REPO_METADATA_TOKEN || github.token }}
+          INPUT_DESC: ${{ github.event.inputs.description }}
+          INPUT_HOMEPAGE: ${{ github.event.inputs.homepage }}
+          OPTIMIZE_SETTINGS: ${{ github.event.inputs.optimize_settings }}
         run: |
-          gh repo edit "${{ github.repository }}" \
-            --description "$REPO_DESC" \
-            --add-topic android \
-            --add-topic android-launcher \
-            --add-topic home-screen-backup \
-            --add-topic icon-sync \
-            --add-topic widget-sync \
-            --add-topic apk \
-            --add-topic kotlin \
-            --add-topic react \
-            --add-topic typescript \
-            --add-topic gplv3
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+          DESC="$INPUT_DESC"
+          if [ -z "$DESC" ]; then
+            DESC="$(jq -r '.description' .github/repo-metadata.json)"
+          fi
+
+          HOMEPAGE="$INPUT_HOMEPAGE"
+          if [ -z "$HOMEPAGE" ]; then
+            HOMEPAGE="$(jq -r '.homepage // ""' .github/repo-metadata.json)"
+          fi
+
+          EDIT_ARGS=(--description "$DESC")
+          if [ -n "$HOMEPAGE" ]; then
+            EDIT_ARGS+=(--homepage "$HOMEPAGE")
+          fi
+
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "$OPTIMIZE_SETTINGS" = "true" ]; then
+            ENABLE_ISSUES="$(jq -r '.settings.enable_issues' .github/repo-metadata.json)"
+            ENABLE_PROJECTS="$(jq -r '.settings.enable_projects' .github/repo-metadata.json)"
+            ENABLE_WIKI="$(jq -r '.settings.enable_wiki' .github/repo-metadata.json)"
+            DELETE_BRANCH="$(jq -r '.settings.delete_branch_on_merge' .github/repo-metadata.json)"
+            SQUASH_MERGE="$(jq -r '.settings.enable_squash_merge' .github/repo-metadata.json)"
+            MERGE_COMMIT="$(jq -r '.settings.enable_merge_commit' .github/repo-metadata.json)"
+            REBASE_MERGE="$(jq -r '.settings.enable_rebase_merge' .github/repo-metadata.json)"
+
+            EDIT_ARGS+=(
+              "--enable-issues=$ENABLE_ISSUES"
+              "--enable-projects=$ENABLE_PROJECTS"
+              "--enable-wiki=$ENABLE_WIKI"
+              "--delete-branch-on-merge=$DELETE_BRANCH"
+              "--enable-squash-merge=$SQUASH_MERGE"
+              "--enable-merge-commit=$MERGE_COMMIT"
+              "--enable-rebase-merge=$REBASE_MERGE"
+            )
+          fi
+
+          echo "Updating GitHub repository metadata for $REPO..."
+          if ! gh repo edit "$REPO" "${EDIT_ARGS[@]}"; then
+            echo "::warning::gh repo edit requires repository administration permission. If using default GITHUB_TOKEN, add a fine-grained PAT secret named REPO_METADATA_TOKEN with Administration: Read & Write."
+            exit 1
+          fi
+
+          # Replace repository topics cleanly (removes obsolete topics such as gplv3)
+          TOPICS_PAYLOAD="$(jq '{names: .topics}' .github/repo-metadata.json)"
+          printf '%s' "$TOPICS_PAYLOAD" | gh api --method PUT "repos/$REPO/topics" \
+            -H "Accept: application/vnd.github+json" \
+            --input - >/dev/null
+
+          {
+            echo "## GitHub Repository Metadata Synced"
+            echo ""
+            echo "- **Repository:** \`$REPO\`"
+            echo "- **Description:** $DESC"
+            if [ -n "$HOMEPAGE" ]; then
+              echo "- **Homepage:** $HOMEPAGE"
+            fi
+            echo "- **Topics:** $(jq -r '.topics | map("`" + . + "`") | join(", ")' .github/repo-metadata.json)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync standardized Issue & PR labels
+        if: github.event_name != 'workflow_dispatch' || inputs.sync_labels == true
+        env:
+          GH_TOKEN: ${{ secrets.REPO_METADATA_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          jq -c '.labels[]' .github/repo-metadata.json | while IFS= read -r label; do
+            NAME="$(printf '%s' "$label" | jq -r '.name')"
+            COLOR="$(printf '%s' "$label" | jq -r '.color')"
+            DESC="$(printf '%s' "$label" | jq -r '.description')"
+            gh label create "$NAME" --repo "$REPO" --color "$COLOR" --description "$DESC" --force
+          done
+          echo "- **Labels Synced:** $(jq '.labels | length' .github/repo-metadata.json) standardized labels" >> "$GITHUB_STEP_SUMMARY"

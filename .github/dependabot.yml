@@ -1,19 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
     open-pull-requests-limit: 5
+    labels:
+      - "web-studio"
+      - "security"
 
   - package-ecosystem: "gradle"
     directory: "/android"
     schedule:
       interval: "weekly"
+      day: "monday"
     open-pull-requests-limit: 5
+    labels:
+      - "android-apk"
+      - "security"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
     open-pull-requests-limit: 5
+    labels:
+      - "security"

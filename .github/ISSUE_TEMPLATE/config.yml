@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Disclosure
+    url: https://github.com/OWNER/REPO/blob/main/SECURITY.md
+    about: Please report security issues privately according to SECURITY.md (do not open a public issue).
+  - name: Privacy Policy & Data Map
+    url: https://github.com/OWNER/REPO/blob/main/PRIVACY.md
+    about: Read how Icon Sync handles home screen metadata, permissions, and local storage.
+  - name: Support & Troubleshooting Guide
+    url: https://github.com/OWNER/REPO/blob/main/SUPPORT.md
+    about: Check troubleshooting steps for Cloud Vault, cross-grid restore, and APK sideloading.

@@ -1,0 +1,33 @@
+name: Launcher Grid Compatibility Report
+description: Request built-in auto-detection or profile support for an Android phone or custom/mini launcher
+title: "[Launcher Grid]: "
+labels: ["grid-engine", "android-apk", "alpha-feedback"]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device Model & Android Version
+      placeholder: "e.g. Samsung Galaxy A16 (SM-A166U), Android 15 / One UI 7"
+    validations:
+      required: true
+  - type: input
+    id: launcher
+    attributes:
+      label: Launcher Name & Package ID
+      placeholder: "e.g. Niagara Launcher (bitpit.launcher) or Mini Launcher"
+    validations:
+      required: true
+  - type: input
+    id: grid
+    attributes:
+      label: Grid Dimensions (Columns x Rows) & Dock Slots
+      placeholder: "e.g. 5x4 grid, 4 dock slots"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Grid Detection & Export Notes
+      description: Does this launcher expose a grid ContentProvider, support Accessibility bounds detection, or export its own backup file?
+    validations:
+      required: false

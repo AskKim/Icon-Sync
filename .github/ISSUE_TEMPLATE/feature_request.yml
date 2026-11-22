@@ -1,0 +1,31 @@
+name: Feature Request
+description: Propose a new feature, launcher capability, or UX improvement for Icon Sync
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Goal
+      description: Describe the home screen backup, migration, or widget sync workflow you want to improve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe how you envision this working in Web Studio and/or the Android APK.
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target Surface
+      options:
+        - Both Web Studio & Android APK
+        - Web Studio Only
+        - Android APK Only
+        - Cross-Grid Engine
+        - Documentation / Governance
+    validations:
+      required: true

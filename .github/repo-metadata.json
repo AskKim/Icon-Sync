@@ -1,0 +1,39 @@
+{
+  "description": "Icon Sync (Alpha 0.1) — Open-source (AGPL-3.0+) Android home screen layout backup, cross-grid (6x6 to 5x4) adaptation, Replace/Merge restore, widget sync studio, diagnostics & native Android APK.",
+  "homepage": "",
+  "topics": [
+    "android",
+    "android-launcher",
+    "home-screen-backup",
+    "icon-sync",
+    "widget-sync",
+    "apk",
+    "kotlin",
+    "react",
+    "typescript",
+    "agplv3",
+    "open-source",
+    "cross-grid"
+  ],
+  "settings": {
+    "enable_issues": true,
+    "enable_projects": false,
+    "enable_wiki": false,
+    "delete_branch_on_merge": true,
+    "enable_squash_merge": true,
+    "enable_merge_commit": false,
+    "enable_rebase_merge": true
+  },
+  "labels": [
+    { "name": "bug", "color": "D73A4A", "description": "Something isn't working in Web Studio or Android APK" },
+    { "name": "enhancement", "color": "166534", "description": "New feature or improvement" },
+    { "name": "android-apk", "color": "3DDC84", "description": "Native Kotlin Android APK, Gradle, or APK workflow" },
+    { "name": "grid-engine", "color": "0E8A16", "description": "Cross-grid remapping (6x6 to 5x4), Replace/Merge, or launcher detection" },
+    { "name": "web-studio", "color": "1D76DB", "description": "React Web Studio UI or Express Cloud Vault server" },
+    { "name": "alpha-feedback", "color": "FBCA04", "description": "Feedback and findings from v0.1.0-alpha.1 testers" },
+    { "name": "privacy", "color": "5319E7", "description": "PRIVACY.md, DATA_MAP.md, or Android Data Safety compliance" },
+    { "name": "security", "color": "B60205", "description": "Security hardening, input sanitation, or CodeQL findings" },
+    { "name": "documentation", "color": "0075CA", "description": "README, ARCHITECTURE.md, or contributor documentation" },
+    { "name": "good first issue", "color": "7057FF", "description": "Welcoming issue for first-time Icon Sync contributors" }
+  ]
+}

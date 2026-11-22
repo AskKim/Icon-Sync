@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 name: CodeQL & Dependency Security
 
 on:
@@ -8,6 +9,10 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   actions: read
@@ -49,6 +54,7 @@ jobs:
 
       - name: Audit production dependencies
         run: |
+          set -euo pipefail
           if [ ! -f package-lock.json ]; then
             npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           fi

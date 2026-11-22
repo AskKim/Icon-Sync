@@ -1,8 +1,8 @@
 /**
  * @file server.ts
- * @license GPL-3.0-or-later
+ * @license AGPL-3.0-or-later
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * ============================================================================
  * ICON SYNC — EXPRESS CLOUD VAULT SERVER & VITE HOST
@@ -45,7 +45,7 @@ const DATA_DIR = path.resolve(__dirname, '.data');
 const VAULT_FILE = resolveConfinedDataPath('icon-sync-vault.json');
 const LEGACY_VAULT_FILE = resolveConfinedDataPath('homegrid-vault.json');
 
-const SERVICE_VERSION = '2.3.0';
+const SERVICE_VERSION = '0.1.0-alpha.1';
 const STARTED_AT = Date.now();
 
 // Hard upper limits to protect memory and disk from abusive payloads

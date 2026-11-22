@@ -1,0 +1,61 @@
+name: Bug Report
+description: Report a bug in Icon Sync Web Studio, Cloud Vault, Grid Remapper, or Android APK
+title: "[Bug]: "
+labels: ["bug", "alpha-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing **Icon Sync**! Please include enough detail so we can reproduce and fix the issue quickly.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Area
+      options:
+        - Web Studio UI (React)
+        - Express Cloud Vault (/api/*)
+        - Cross-Grid Remapper (e.g. 6x6 to 5x4)
+        - Android APK (com.iconsync.android)
+        - GitHub Actions / APK Build Workflow
+        - Documentation / Privacy
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Icon Sync Version
+      placeholder: "e.g. v0.1.0-alpha.1"
+    validations:
+      required: true
+  - type: input
+    id: device_grid
+    attributes:
+      label: Device, Launcher & Grid Size (if applicable)
+      placeholder: "e.g. Galaxy A15 (One UI Home 4x6) <- Nova Launcher 8 (6x6)"
+    validations:
+      required: false
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs. Actual Behavior
+      placeholder: What you expected to happen and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or Diagnostics Output (Optional)
+      description: Paste any sanitized output from the Developer tab (Ctrl+Shift+D) or GitHub Actions logs.
+      render: text
+    validations:
+      required: false

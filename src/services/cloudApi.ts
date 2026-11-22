@@ -1,8 +1,8 @@
 /**
  * @file src/services/cloudApi.ts
- * @license GPL-3.0-or-later
+ * @license AGPL-3.0-or-later
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * ============================================================================
  * ICON SYNC — CLOUD VAULT API CLIENT, LOCAL CACHE & SAFE FILE EXPORTERS
@@ -172,7 +172,7 @@ export async function fetchServerDiagnostics(): Promise<ServerDiagnosticsSnapsho
     return {
       ok: false,
       service: 'icon-sync-cloud-vault',
-      version: '2.2.0',
+      version: '0.1.0-alpha.1',
       vaultFileExists: false,
       vaultFilePath: '.data/icon-sync-vault.json',
       vaultSizeBytes: 0,
