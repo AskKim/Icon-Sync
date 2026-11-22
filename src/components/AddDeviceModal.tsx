@@ -62,6 +62,17 @@ const QUICK_DEVICE_PRESETS: {
     gridRows: 5,
   },
   {
+    label: 'Cricket Icon 5 (4×5)',
+    name: 'Cricket Icon 5',
+    modelCode: 'SL112C',
+    manufacturer: 'Cricket',
+    androidVersion: 'Android 13',
+    launcher: 'Quickstep Launcher (AOSP)',
+    formFactor: 'phone',
+    gridCols: 4,
+    gridRows: 5,
+  },
+  {
     label: 'Nova Power Phone (6×6)',
     name: 'OnePlus 13 (Nova)',
     modelCode: 'CPH2655',

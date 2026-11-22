@@ -23,7 +23,7 @@
  * lives in `src/services/cloudApi.ts`. See `ARCHITECTURE.md` for a full map.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   Cloud,
@@ -68,6 +68,7 @@ import {
   buildBackupSnapshot,
   canPlaceAt,
   cloneDeep,
+  computeBackupChecksum,
   computeChecksum,
   computeOccupancyGrid,
   findFirstOpenSlot,
@@ -80,29 +81,63 @@ import {
 } from './engine/layoutEngine';
 import {
   clearLocalStorageCache,
+  CloudVaultState,
   downloadBackupJson,
   downloadMissingAppsFile,
   loadVaultState,
   persistVaultState,
   pushBackupToCloud,
+  readLocalVaultCacheSync,
   removeBackupFromCloud,
   setFaultSimulationConfig,
 } from './services/cloudApi';
 import { PhoneCanvas } from './components/PhoneCanvas';
 import { InspectorPanel } from './components/InspectorPanel';
-import { BackupExportModal } from './components/BackupExportModal';
-import { ImportRestoreModal } from './components/ImportRestoreModal';
-import { MissingAppsModal } from './components/MissingAppsModal';
-import { BackupsView } from './components/BackupsView';
-import { WidgetSyncView } from './components/WidgetSyncView';
-import { HowItWorksView } from './components/HowItWorksView';
-import { DeveloperToolsView } from './components/DeveloperToolsView';
 import { FeedbackBanner } from './components/FeedbackBanner';
-import { AddDeviceModal } from './components/AddDeviceModal';
+
+// Lazy-load secondary tabs and on-demand modals so initial boot only parses Screens studio
+const BackupsView = lazy(() =>
+  import('./components/BackupsView').then((m) => ({ default: m.BackupsView }))
+);
+const WidgetSyncView = lazy(() =>
+  import('./components/WidgetSyncView').then((m) => ({ default: m.WidgetSyncView }))
+);
+const HowItWorksView = lazy(() =>
+  import('./components/HowItWorksView').then((m) => ({ default: m.HowItWorksView }))
+);
+const DeveloperToolsView = lazy(() =>
+  import('./components/DeveloperToolsView').then((m) => ({ default: m.DeveloperToolsView }))
+);
+const BackupExportModal = lazy(() =>
+  import('./components/BackupExportModal').then((m) => ({ default: m.BackupExportModal }))
+);
+const ImportRestoreModal = lazy(() =>
+  import('./components/ImportRestoreModal').then((m) => ({ default: m.ImportRestoreModal }))
+);
+const MissingAppsModal = lazy(() =>
+  import('./components/MissingAppsModal').then((m) => ({ default: m.MissingAppsModal }))
+);
+const AddDeviceModal = lazy(() =>
+  import('./components/AddDeviceModal').then((m) => ({ default: m.AddDeviceModal }))
+);
+
+function TabLoadingFallback() {
+  return (
+    <div className="bg-white border border-[#E4E7EC] rounded-2xl p-8 space-y-4 animate-pulse">
+      <div className="h-6 w-56 bg-[#ECEEF2] rounded-md" />
+      <div className="h-4 w-96 max-w-full bg-[#F3F4F6] rounded-md" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+        <div className="h-28 bg-[#F9FAFB] border border-[#F1F3F6] rounded-xl" />
+        <div className="h-28 bg-[#F9FAFB] border border-[#F1F3F6] rounded-xl" />
+        <div className="h-28 bg-[#F9FAFB] border border-[#F1F3F6] rounded-xl" />
+      </div>
+    </div>
+  );
+}
 
 type ActiveTab = 'screens' | 'backups' | 'widgets' | 'how-it-works' | 'developer';
 
-const VAULT_SCHEMA_REVISION = 5;
+const VAULT_SCHEMA_REVISION = 7;
 
 interface UndoSnapshot {
   deviceId: string;
@@ -117,19 +152,133 @@ const DEFAULT_FAULT_CONFIG: FaultSimulationConfig = {
   failLauncherGridAutoDetect: false,
 };
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('screens');
-  const [devices, setDevices] = useState<DeviceProfile[]>(() => createInitialDevices());
-  const [backups, setBackups] = useState<LayoutBackupSnapshot[]>(() =>
-    createInitialBackups(createInitialDevices())
-  );
-  const [widgetSyncPolicy, setWidgetSyncPolicy] = useState<WidgetSyncPolicy>({
-    conflictStrategy: 'newest',
-    autoSyncEnabled: true,
-    lastSyncAt: '2026-11-21T07:02:00.000Z',
-  });
+const DEFAULT_WIDGET_SYNC_POLICY: WidgetSyncPolicy = {
+  conflictStrategy: 'newest',
+  autoSyncEnabled: true,
+  lastSyncAt: '2026-11-21T07:02:00.000Z',
+};
 
-  const [activeDeviceId, setActiveDeviceId] = useState<string>('dev-pixel-9-pro');
+function normalizeLoadedVault(rawState: CloudVaultState): {
+  devices: DeviceProfile[];
+  backups: LayoutBackupSnapshot[];
+  widgetSyncPolicy: WidgetSyncPolicy;
+  needsMigration: boolean;
+} {
+  const needsMigration =
+    !rawState.schemaRevision || rawState.schemaRevision < VAULT_SCHEMA_REVISION;
+
+  // Only instantiate factory defaults when a schema migration actually needs them
+  const defaultDevices = needsMigration ? createInitialDevices() : null;
+  const defaultBackups =
+    needsMigration && defaultDevices ? createInitialBackups(defaultDevices) : null;
+
+  let normalizedDevices: DeviceProfile[] = rawState.devices
+    .filter((d) => !(needsMigration && d.id === 'dev-galaxy-a15-16'))
+    .map((d) => {
+      const def = defaultDevices?.find((item) => item.id === d.id);
+      const upgradedTabS9 =
+        needsMigration && d.id === 'dev-tab-s9' && d.gridCols === 5 && d.gridRows === 6 && def
+          ? def
+          : d;
+
+      return {
+        ...upgradedTabS9,
+        gridDetectionSource:
+          upgradedTabS9.gridDetectionSource ?? def?.gridDetectionSource ?? 'auto-accessibility',
+        gridConfidence: upgradedTabS9.gridConfidence ?? def?.gridConfidence ?? 'verified',
+        gridDetectedAt:
+          upgradedTabS9.gridDetectedAt ?? def?.gridDetectedAt ?? upgradedTabS9.lastScannedAt,
+        installedPackages:
+          Array.isArray(upgradedTabS9.installedPackages) &&
+          upgradedTabS9.installedPackages.length > 0
+            ? upgradedTabS9.installedPackages
+            : def?.installedPackages ?? [],
+      };
+    });
+
+  if (needsMigration && defaultDevices) {
+    const existingDeviceIds = new Set(normalizedDevices.map((d) => d.id));
+    const missingDefaults = defaultDevices.filter((def) => !existingDeviceIds.has(def.id));
+    if (missingDefaults.length > 0) {
+      const insertAt = Math.min(1, normalizedDevices.length);
+      normalizedDevices = [
+        ...normalizedDevices.slice(0, insertAt),
+        ...missingDefaults,
+        ...normalizedDevices.slice(insertAt),
+      ];
+    }
+  }
+
+  let normalizedBackups = Array.isArray(rawState.backups) ? [...rawState.backups] : [];
+  if (needsMigration && defaultBackups) {
+    normalizedBackups = normalizedBackups.filter(
+      (b) => b.id !== 'bk-galaxy-a15-16-oneui'
+    );
+    normalizedBackups = normalizedBackups.map((b) => {
+      if (b.includesIconArt !== undefined) return b;
+      const def = defaultBackups.find((d) => d.id === b.id);
+      if (!def) return b;
+      return {
+        ...b,
+        includesIconArt: def.includesIconArt,
+        ...(def.iconArtAssets ? { iconArtAssets: def.iconArtAssets } : {}),
+        stats: def.stats,
+        checksum: def.checksum,
+      };
+    });
+    const existingBackupIds = new Set(normalizedBackups.map((b) => b.id));
+    const missingDefaultBackups = defaultBackups.filter(
+      (def) => !existingBackupIds.has(def.id)
+    );
+    if (missingDefaultBackups.length > 0) {
+      normalizedBackups = [...missingDefaultBackups, ...normalizedBackups];
+    }
+  }
+
+  return {
+    devices: normalizedDevices,
+    backups: normalizedBackups,
+    widgetSyncPolicy: rawState.widgetSyncPolicy ?? DEFAULT_WIDGET_SYNC_POLICY,
+    needsMigration,
+  };
+}
+
+function getInitialBootState(): {
+  devices: DeviceProfile[];
+  backups: LayoutBackupSnapshot[];
+  widgetSyncPolicy: WidgetSyncPolicy;
+  activeDeviceId: string;
+} {
+  const cached = readLocalVaultCacheSync();
+  if (cached) {
+    const normalized = normalizeLoadedVault(cached);
+    return {
+      devices: normalized.devices,
+      backups: normalized.backups,
+      widgetSyncPolicy: normalized.widgetSyncPolicy,
+      activeDeviceId: normalized.devices[0]?.id ?? 'dev-pixel-9-pro',
+    };
+  }
+
+  const initialDevices = createInitialDevices();
+  return {
+    devices: initialDevices,
+    backups: createInitialBackups(initialDevices),
+    widgetSyncPolicy: DEFAULT_WIDGET_SYNC_POLICY,
+    activeDeviceId: initialDevices[0]?.id ?? 'dev-pixel-9-pro',
+  };
+}
+
+export default function App() {
+  const [initialBoot] = useState(getInitialBootState);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('screens');
+  const [devices, setDevices] = useState<DeviceProfile[]>(initialBoot.devices);
+  const [backups, setBackups] = useState<LayoutBackupSnapshot[]>(initialBoot.backups);
+  const [widgetSyncPolicy, setWidgetSyncPolicy] = useState<WidgetSyncPolicy>(
+    initialBoot.widgetSyncPolicy
+  );
+
+  const [activeDeviceId, setActiveDeviceId] = useState<string>(initialBoot.activeDeviceId);
   const [activeScreenIndex, setActiveScreenIndex] = useState<number>(0);
   const [selection, setSelection] = useState<SelectionTarget>({ type: 'screen' });
   const [isScanning, setIsScanning] = useState(false);
@@ -157,6 +306,18 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false);
 
   const autoHideTimersRef = useRef<Map<string, number>>(new Map());
+  const scanTimerRef = useRef<number | null>(null);
+  // Tracks last persisted checksum so identical states never trigger redundant PUT /api/vault writes
+  const lastSavedSignatureRef = useRef<string>('');
+  const bootSignatureRef = useRef<string | null>(
+    initialBoot.devices.length > 0 && readLocalVaultCacheSync() !== null
+      ? computeChecksum({
+          devices: initialBoot.devices,
+          backups: initialBoot.backups,
+          widgetSyncPolicy: initialBoot.widgetSyncPolicy,
+        })
+      : null
+  );
 
   const recordLog = useCallback((entry: Omit<DiagnosticLogEntry, 'id' | 'timestamp'>) => {
     const full: DiagnosticLogEntry = {
@@ -245,12 +406,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Cleanup feedback timers on unmount
+  // Cleanup feedback & scan timers on unmount
   useEffect(() => {
     const timers = autoHideTimersRef.current;
     return () => {
       timers.forEach((timerId) => window.clearTimeout(timerId));
       timers.clear();
+      if (scanTimerRef.current !== null) {
+        window.clearTimeout(scanTimerRef.current);
+        scanTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -268,72 +433,34 @@ export default function App() {
       });
 
       if (result.state) {
-        const defaultDevices = createInitialDevices();
-        const defaultBackups = createInitialBackups(defaultDevices);
-        const needsMigration =
-          !result.state.schemaRevision || result.state.schemaRevision < VAULT_SCHEMA_REVISION;
+        const normalized = normalizeLoadedVault(result.state);
+        const loadedSig = computeChecksum({
+          devices: normalized.devices,
+          backups: normalized.backups,
+          widgetSyncPolicy: normalized.widgetSyncPolicy,
+        });
 
-        let normalizedDevices: DeviceProfile[] = result.state.devices
-          .filter((d) => !(needsMigration && d.id === 'dev-galaxy-a15-16'))
-          .map((d) => {
-            const def = defaultDevices.find((item) => item.id === d.id);
-            const upgradedTabS9 =
-              needsMigration && d.id === 'dev-tab-s9' && d.gridCols === 5 && d.gridRows === 6 && def
-                ? def
-                : d;
-
-            return {
-              ...upgradedTabS9,
-              gridDetectionSource:
-                upgradedTabS9.gridDetectionSource ?? def?.gridDetectionSource ?? 'auto-accessibility',
-              gridConfidence: upgradedTabS9.gridConfidence ?? def?.gridConfidence ?? 'verified',
-              gridDetectedAt:
-                upgradedTabS9.gridDetectedAt ?? def?.gridDetectedAt ?? upgradedTabS9.lastScannedAt,
-              installedPackages:
-                Array.isArray(upgradedTabS9.installedPackages) &&
-                upgradedTabS9.installedPackages.length > 0
-                  ? upgradedTabS9.installedPackages
-                  : def?.installedPackages ?? [],
-            };
-          });
-
-        if (needsMigration) {
-          const existingDeviceIds = new Set(normalizedDevices.map((d) => d.id));
-          const missingDefaults = defaultDevices.filter((def) => !existingDeviceIds.has(def.id));
-          if (missingDefaults.length > 0) {
-            const insertAt = Math.min(1, normalizedDevices.length);
-            normalizedDevices = [
-              ...normalizedDevices.slice(0, insertAt),
-              ...missingDefaults,
-              ...normalizedDevices.slice(insertAt),
-            ];
-          }
+        if (result.source === 'cloud' && !normalized.needsMigration) {
+          // Record signature of the already-persisted cloud state so boot doesn't bounce PUT /api/vault back
+          lastSavedSignatureRef.current = loadedSig;
         }
 
-        let normalizedBackups = Array.isArray(result.state.backups) ? [...result.state.backups] : [];
-        if (needsMigration) {
-          normalizedBackups = normalizedBackups.filter(
-            (b) => b.id !== 'bk-galaxy-a15-16-oneui'
+        // Skip re-rendering the entire tree on initial boot if warm local cache already matched cloud
+        const matchesWarmBoot =
+          !isManualReload &&
+          bootSignatureRef.current !== null &&
+          bootSignatureRef.current === loadedSig;
+
+        if (!matchesWarmBoot) {
+          setDevices(normalized.devices);
+          setBackups(normalized.backups);
+          setWidgetSyncPolicy(normalized.widgetSyncPolicy);
+          setActiveDeviceId((prevId) =>
+            normalized.devices.some((d) => d.id === prevId)
+              ? prevId
+              : normalized.devices[0]?.id ?? 'dev-pixel-9-pro'
           );
-          const existingBackupIds = new Set(normalizedBackups.map((b) => b.id));
-          const missingDefaultBackups = defaultBackups.filter(
-            (def) => !existingBackupIds.has(def.id)
-          );
-          if (missingDefaultBackups.length > 0) {
-            normalizedBackups = [...missingDefaultBackups, ...normalizedBackups];
-          }
         }
-
-        setDevices(normalizedDevices);
-        setBackups(normalizedBackups);
-        if (result.state.widgetSyncPolicy) {
-          setWidgetSyncPolicy(result.state.widgetSyncPolicy);
-        }
-        setActiveDeviceId((prevId) =>
-          normalizedDevices.some((d) => d.id === prevId)
-            ? prevId
-            : normalizedDevices[0]?.id ?? 'dev-pixel-9-pro'
-        );
       }
 
       if (result.cloudError) {
@@ -458,16 +585,14 @@ export default function App() {
     [activeDeviceId, pushFeedback, recordLog]
   );
 
-  // Tracks last persisted checksum so identical states never trigger redundant PUT /api/vault writes
-  const lastSavedSignatureRef = useRef<string>('');
-
   // Auto-persist changes to Express Cloud Vault + localStorage after hydration
+  // Compute checksum inside the debounce timer so rapid keystrokes never serialize the whole vault synchronously
   useEffect(() => {
     if (!hydrated) return;
-    const signature = computeChecksum({ devices, backups, widgetSyncPolicy });
-    if (signature === lastSavedSignatureRef.current) return;
 
     const timer = window.setTimeout(() => {
+      const signature = computeChecksum({ devices, backups, widgetSyncPolicy });
+      if (signature === lastSavedSignatureRef.current) return;
       lastSavedSignatureRef.current = signature;
       void persistCurrentState(devices, backups, widgetSyncPolicy, false);
     }, 350);
@@ -664,7 +789,11 @@ export default function App() {
   const handleScanDevice = () => {
     if (isScanning) return;
     setIsScanning(true);
-    window.setTimeout(() => {
+    if (scanTimerRef.current !== null) {
+      window.clearTimeout(scanTimerRef.current);
+    }
+    scanTimerRef.current = window.setTimeout(() => {
+      scanTimerRef.current = null;
       const scannedAt = new Date().toISOString();
       const detect = autoDetectDeviceGrid(activeDevice, {
         simulateFailure: faultConfig.failLauncherGridAutoDetect,
@@ -1272,15 +1401,18 @@ export default function App() {
     name,
     notes,
     destination,
+    includeIconArt,
   }: {
     name: string;
     notes: string;
     destination: 'cloud' | 'local' | 'both';
+    includeIconArt: boolean;
   }) => {
     let snapshot = buildBackupSnapshot(activeDevice, {
       name,
       notes,
       storage: destination === 'local' ? 'local' : 'cloud',
+      includeIconArt,
     });
 
     if (faultConfig.corruptBackupChecksumOnExport) {
@@ -1304,7 +1436,9 @@ export default function App() {
         category: 'api',
         title: `Export backup "${snapshot.name}"`,
         message: res.ok
-          ? `Uploaded to Cloud Vault (${res.latencyMs}ms) · Grid ${snapshot.gridCols}×${snapshot.gridRows}`
+          ? `Uploaded to Cloud Vault (${res.latencyMs}ms) · Grid ${snapshot.gridCols}×${snapshot.gridRows} · ${
+              includeIconArt ? `Icon art (${snapshot.stats.iconArtCount ?? 0} apps)` : 'Layout only'
+            }`
           : res.error ?? 'Cloud upload failed',
         durationMs: res.latencyMs,
         statusCode: res.status,
@@ -1364,7 +1498,9 @@ export default function App() {
         level: 'success',
         category: 'vault',
         title: `Exported local JSON "${snapshot.name}"`,
-        message: `Grid ${snapshot.gridCols}×${snapshot.gridRows}, ${snapshot.stats.iconCount} icons.`,
+        message: `Grid ${snapshot.gridCols}×${snapshot.gridRows}, ${snapshot.stats.iconCount} icons, ${
+          includeIconArt ? `icon art (${snapshot.stats.iconArtCount ?? 0} apps)` : 'layout only'
+        }.`,
       });
     }
 
@@ -1387,15 +1523,18 @@ export default function App() {
       return;
     }
 
+    const artSummary = includeIconArt
+      ? ` with icon art (${snapshot.stats.iconArtCount ?? 0} apps)`
+      : ' (layout only, no icon art)';
     pushFeedback({
       severity: 'success',
       title: `Backup "${snapshot.name}" created`,
       message:
         destination === 'local'
-          ? `Downloaded local JSON snapshot (${snapshot.gridCols}×${snapshot.gridRows}).`
+          ? `Downloaded local JSON snapshot (${snapshot.gridCols}×${snapshot.gridRows})${artSummary}.`
           : destination === 'cloud'
-          ? `Saved ${snapshot.gridCols}×${snapshot.gridRows} layout snapshot to Cloud Vault.`
-          : `Saved to Cloud Vault and downloaded local JSON file (${snapshot.gridCols}×${snapshot.gridRows}).`,
+          ? `Saved ${snapshot.gridCols}×${snapshot.gridRows} layout snapshot to Cloud Vault${artSummary}.`
+          : `Saved to Cloud Vault and downloaded local JSON file (${snapshot.gridCols}×${snapshot.gridRows})${artSummary}.`,
     });
   };
 
@@ -1544,6 +1683,12 @@ export default function App() {
     const gridPart = gridChanged
       ? ` · Adapted ${report.sourceGrid.cols}×${report.sourceGrid.rows} → ${report.targetGridAfter.cols}×${report.targetGridAfter.rows} (${report.gridStrategy})`
       : '';
+    const artPart =
+      report.iconArtImported > 0
+        ? ` · ${report.iconArtImported} icon art imported`
+        : report.iconArtSkipped
+        ? ' · icon art skipped'
+        : '';
     const croppedPart =
       report.itemsDroppedByCrop > 0
         ? ` · ${report.itemsDroppedByCrop} out-of-bounds item(s) dropped by Crop mode`
@@ -1553,13 +1698,13 @@ export default function App() {
       level: report.itemsDroppedByCrop > 0 ? 'warn' : 'success',
       category: 'restore',
       title: `${report.mode === 'replace' ? 'Replaced' : 'Merged'} layout on ${report.targetDeviceName}`,
-      message: `+${report.iconsAdded} live icons, ${report.placeholdersCreated} placeholders, ${report.outOfBoundsRelocated} relocated, ${report.widgetsResized} widgets resized${gridPart}${croppedPart}.`,
+      message: `+${report.iconsAdded} live icons, ${report.placeholdersCreated} placeholders, ${report.outOfBoundsRelocated} relocated, ${report.widgetsResized} widgets resized${gridPart}${artPart}${croppedPart}.`,
     });
 
     pushFeedback({
       severity: report.itemsDroppedByCrop > 0 ? 'warning' : 'success',
       title: `${report.mode === 'replace' ? 'Replaced' : 'Merged'} layout on ${report.targetDeviceName}`,
-      message: `Placed +${report.iconsAdded} live icons and ${report.placeholdersCreated} placeholder(s)${gridPart}${croppedPart}.`,
+      message: `Placed +${report.iconsAdded} live icons and ${report.placeholdersCreated} placeholder(s)${gridPart}${artPart}${croppedPart}.`,
       recoveryActions:
         report.itemsDroppedByCrop > 0 && previous
           ? [
@@ -1649,12 +1794,13 @@ export default function App() {
         fixed = true;
         return {
           ...bk,
-          checksum: computeChecksum({
-            screens: bk.screens,
-            dock: bk.dock,
-            gridCols: bk.gridCols,
-            gridRows: bk.gridRows,
-          }),
+          checksum: computeBackupChecksum(
+            bk.screens,
+            bk.dock,
+            bk.gridCols,
+            bk.gridRows,
+            bk.iconArtAssets
+          ),
         };
       });
       return { nextDevices: currentDevices, nextBackups, fixed };
@@ -2136,65 +2282,69 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'backups' && (
-          <BackupsView
-            backups={backups}
-            onOpenImportModal={(backupId) =>
-              setImportModalState({ open: true, backupId })
-            }
-            onOpenExportModal={() => setShowExportModal(true)}
-            onDownloadBackup={downloadBackupJson}
-            onDuplicateBackup={handleDuplicateBackup}
-            onDeleteBackup={handleDeleteBackup}
-          />
-        )}
+        {activeTab !== 'screens' && (
+          <Suspense fallback={<TabLoadingFallback />}>
+            {activeTab === 'backups' && (
+              <BackupsView
+                backups={backups}
+                onOpenImportModal={(backupId) =>
+                  setImportModalState({ open: true, backupId })
+                }
+                onOpenExportModal={() => setShowExportModal(true)}
+                onDownloadBackup={downloadBackupJson}
+                onDuplicateBackup={handleDuplicateBackup}
+                onDeleteBackup={handleDeleteBackup}
+              />
+            )}
 
-        {activeTab === 'widgets' && (
-          <WidgetSyncView
-            devices={devices}
-            policy={widgetSyncPolicy}
-            onUpdatePolicy={setWidgetSyncPolicy}
-            onSyncWidgetAcrossDevices={handleSyncWidgetFromMatrix}
-            onPushWidgetToDevice={handlePushWidgetToDevice}
-            onToggleWidgetSyncOnDevice={handleToggleWidgetSyncOnDevice}
-            onSyncAllNow={handleSyncAllWidgetsNow}
-          />
-        )}
+            {activeTab === 'widgets' && (
+              <WidgetSyncView
+                devices={devices}
+                policy={widgetSyncPolicy}
+                onUpdatePolicy={setWidgetSyncPolicy}
+                onSyncWidgetAcrossDevices={handleSyncWidgetFromMatrix}
+                onPushWidgetToDevice={handlePushWidgetToDevice}
+                onToggleWidgetSyncOnDevice={handleToggleWidgetSyncOnDevice}
+                onSyncAllNow={handleSyncAllWidgetsNow}
+              />
+            )}
 
-        {activeTab === 'how-it-works' && (
-          <HowItWorksView
-            onOpenScreens={() => setActiveTab('screens')}
-            onOpenImportModal={() => setImportModalState({ open: true })}
-            onOpenExportModal={() => setShowExportModal(true)}
-            onOpenBackups={() => setActiveTab('backups')}
-            onOpenWidgets={() => setActiveTab('widgets')}
-          />
-        )}
+            {activeTab === 'how-it-works' && (
+              <HowItWorksView
+                onOpenScreens={() => setActiveTab('screens')}
+                onOpenImportModal={() => setImportModalState({ open: true })}
+                onOpenExportModal={() => setShowExportModal(true)}
+                onOpenBackups={() => setActiveTab('backups')}
+                onOpenWidgets={() => setActiveTab('widgets')}
+              />
+            )}
 
-        {activeTab === 'developer' && (
-          <DeveloperToolsView
-            devices={devices}
-            activeDeviceId={activeDevice.id}
-            backups={backups}
-            widgetSyncPolicy={widgetSyncPolicy}
-            logs={logs}
-            faultConfig={faultConfig}
-            schemaRevision={VAULT_SCHEMA_REVISION}
-            onUpdateFaultConfig={handleUpdateFaultConfig}
-            onAutoFixFinding={handleAutoFixFinding}
-            onAutoFixAllFindings={handleAutoFixAllFindings}
-            onInjectOutOfBoundsFault={handleInjectOutOfBoundsFault}
-            onForcePushCloud={() => persistCurrentState(devices, backups, widgetSyncPolicy, true)}
-            onReloadFromCloud={() => hydrateFromVault(true)}
-            onClearLocalCache={handleClearLocalCache}
-            onResetDemoWorkspace={handleResetDemoWorkspace}
-            onImportRepairedBackup={handleImportRepairedBackup}
-            onClearLogs={() => setLogs([])}
-            onRecordLog={recordLog}
-            onNotify={(severity, title, message) =>
-              pushFeedback({ severity, title, message })
-            }
-          />
+            {activeTab === 'developer' && (
+              <DeveloperToolsView
+                devices={devices}
+                activeDeviceId={activeDevice.id}
+                backups={backups}
+                widgetSyncPolicy={widgetSyncPolicy}
+                logs={logs}
+                faultConfig={faultConfig}
+                schemaRevision={VAULT_SCHEMA_REVISION}
+                onUpdateFaultConfig={handleUpdateFaultConfig}
+                onAutoFixFinding={handleAutoFixFinding}
+                onAutoFixAllFindings={handleAutoFixAllFindings}
+                onInjectOutOfBoundsFault={handleInjectOutOfBoundsFault}
+                onForcePushCloud={() => persistCurrentState(devices, backups, widgetSyncPolicy, true)}
+                onReloadFromCloud={() => hydrateFromVault(true)}
+                onClearLocalCache={handleClearLocalCache}
+                onResetDemoWorkspace={handleResetDemoWorkspace}
+                onImportRepairedBackup={handleImportRepairedBackup}
+                onClearLogs={() => setLogs([])}
+                onRecordLog={recordLog}
+                onNotify={(severity, title, message) =>
+                  pushFeedback({ severity, title, message })
+                }
+              />
+            )}
+          </Suspense>
         )}
       </main>
 
@@ -2224,70 +2374,78 @@ export default function App() {
 
       {/* Save / Export Layout Modal */}
       {showExportModal && (
-        <BackupExportModal
-          device={activeDevice}
-          onClose={() => setShowExportModal(false)}
-          onConfirmExport={handleConfirmExport}
-        />
+        <Suspense fallback={null}>
+          <BackupExportModal
+            device={activeDevice}
+            onClose={() => setShowExportModal(false)}
+            onConfirmExport={handleConfirmExport}
+          />
+        </Suspense>
       )}
 
       {/* Register Custom Device / Mini Launcher Modal */}
       {showAddDeviceModal && (
-        <AddDeviceModal
-          onClose={() => setShowAddDeviceModal(false)}
-          onCreateDevice={handleCreateCustomDevice}
-        />
+        <Suspense fallback={null}>
+          <AddDeviceModal
+            onClose={() => setShowAddDeviceModal(false)}
+            onCreateDevice={handleCreateCustomDevice}
+          />
+        </Suspense>
       )}
 
       {/* Import & Restore (Replace vs Merge + Cross-Grid Strategy) Modal */}
       {importModalState.open && (
-        <ImportRestoreModal
-          devices={devices}
-          initialTargetDeviceId={activeDevice.id}
-          backups={backups}
-          initialBackupId={importModalState.backupId}
-          onClose={() => setImportModalState({ open: false })}
-          onApplyRestore={handleApplyRestore}
-          onReportTargetGrid={(deviceId, cols, rows) =>
-            handleChangeDeviceGrid(cols, rows, deviceId)
-          }
-          onDownloadSampleBackup={() => {
-            const sample = backups[0];
-            if (sample) downloadBackupJson(sample);
-          }}
-        />
+        <Suspense fallback={null}>
+          <ImportRestoreModal
+            devices={devices}
+            initialTargetDeviceId={activeDevice.id}
+            backups={backups}
+            initialBackupId={importModalState.backupId}
+            onClose={() => setImportModalState({ open: false })}
+            onApplyRestore={handleApplyRestore}
+            onReportTargetGrid={(deviceId, cols, rows) =>
+              handleChangeDeviceGrid(cols, rows, deviceId)
+            }
+            onDownloadSampleBackup={() => {
+              const sample = backups[0];
+              if (sample) downloadBackupJson(sample);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Post-Import Missing Apps Walkthrough & Play Store Link File Export Modal */}
       {missingAppsSession && missingAppsSession.modalOpen && (
-        <MissingAppsModal
-          targetDeviceName={missingAppsSession.targetDeviceName}
-          backupName={missingAppsSession.backupName}
-          missingApps={missingAppsSession.missingApps}
-          installedPackages={
-            devices.find((d) => d.id === missingAppsSession.deviceId)?.installedPackages ?? []
-          }
-          initialView={missingAppsSession.initialView}
-          onMarkInstalled={(pkg) =>
-            handleMarkPackageInstalled(pkg, missingAppsSession.deviceId)
-          }
-          onDownloadFile={(format) => {
-            downloadMissingAppsFile(
-              missingAppsSession.targetDeviceName,
-              missingAppsSession.backupName,
-              missingAppsSession.missingApps,
-              format
-            );
-            pushFeedback({
-              severity: 'success',
-              title: `Downloaded Play Store install list (.${format})`,
-              message: `Saved ${missingAppsSession.missingApps.length} missing app link(s) for ${missingAppsSession.targetDeviceName}.`,
-            });
-          }}
-          onClose={() =>
-            setMissingAppsSession((prev) => (prev ? { ...prev, modalOpen: false } : null))
-          }
-        />
+        <Suspense fallback={null}>
+          <MissingAppsModal
+            targetDeviceName={missingAppsSession.targetDeviceName}
+            backupName={missingAppsSession.backupName}
+            missingApps={missingAppsSession.missingApps}
+            installedPackages={
+              devices.find((d) => d.id === missingAppsSession.deviceId)?.installedPackages ?? []
+            }
+            initialView={missingAppsSession.initialView}
+            onMarkInstalled={(pkg) =>
+              handleMarkPackageInstalled(pkg, missingAppsSession.deviceId)
+            }
+            onDownloadFile={(format) => {
+              downloadMissingAppsFile(
+                missingAppsSession.targetDeviceName,
+                missingAppsSession.backupName,
+                missingAppsSession.missingApps,
+                format
+              );
+              pushFeedback({
+                severity: 'success',
+                title: `Downloaded Play Store install list (.${format})`,
+                message: `Saved ${missingAppsSession.missingApps.length} missing app link(s) for ${missingAppsSession.targetDeviceName}.`,
+              });
+            }}
+            onClose={() =>
+              setMissingAppsSession((prev) => (prev ? { ...prev, modalOpen: false } : null))
+            }
+          />
+        </Suspense>
       )}
     </div>
   );

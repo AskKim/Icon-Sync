@@ -133,6 +133,29 @@ export function inspectLocalStorageCache(): {
   }
 }
 
+export function readLocalVaultCacheSync(): CloudVaultState | null {
+  for (const key of [LOCAL_STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = stripDangerousKeys(JSON.parse(raw)) as CloudVaultState;
+      if (Array.isArray(parsed.devices) && parsed.devices.length > 0) {
+        if (key === LEGACY_STORAGE_KEY) {
+          try {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+          } catch {
+            // ignore storage quota errors
+          }
+        }
+        return parsed;
+      }
+    } catch {
+      // ignore parse failures
+    }
+  }
+  return null;
+}
+
 export function clearLocalStorageCache(): void {
   try {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -256,31 +279,14 @@ export async function loadVaultState(): Promise<{
     }
   }
 
-  // Fallback to new Icon Sync localStorage key, then legacy HomeGrid key
-  for (const key of [LOCAL_STORAGE_KEY, LEGACY_STORAGE_KEY]) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const parsed = stripDangerousKeys(JSON.parse(raw)) as CloudVaultState;
-        if (Array.isArray(parsed.devices) && parsed.devices.length > 0) {
-          if (key === LEGACY_STORAGE_KEY) {
-            try {
-              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
-            } catch {
-              // ignore
-            }
-          }
-          return {
-            state: parsed,
-            source: 'local',
-            latencyMs: Math.round(performance.now() - start),
-            cloudError,
-          };
-        }
-      }
-    } catch {
-      // ignore parse failures
-    }
+  const localCached = readLocalVaultCacheSync();
+  if (localCached) {
+    return {
+      state: localCached,
+      source: 'local',
+      latencyMs: Math.round(performance.now() - start),
+      cloudError,
+    };
   }
 
   return {

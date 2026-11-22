@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Download, FileCode2 } from 'lucide-react';
 import { ANDROID_COMPANION_FILES } from '../data/kotlinCompanion';
 
 export function CompanionView() {
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   const activeFile = ANDROID_COMPANION_FILES[selectedFileIndex];
 
@@ -12,7 +21,10 @@ export function CompanionView() {
     try {
       await navigator.clipboard.writeText(activeFile.content);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1800);
     } catch {
       // ignore clipboard errors
     }

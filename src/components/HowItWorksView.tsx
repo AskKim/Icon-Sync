@@ -22,7 +22,7 @@ const STEPS = [
   {
     number: '01',
     title: 'Pick your phone and check your screens',
-    body: 'Choose a phone at the top of the Screens tab — like Pixel 9 Pro, Galaxy A15, Galaxy A16, or Galaxy S24 Ultra. Tap any app icon, folder, or widget on the phone screen to move it, edit it, or add extra pages.',
+    body: 'Choose a phone at the top of the Screens tab — like Pixel 9 Pro, Galaxy A15, Galaxy A16, Cricket Icon 5, or Galaxy S24 Ultra. Tap any app icon, folder, or widget on the phone screen to move it, edit it, or add extra pages.',
     tip: 'Nothing breaks while you test changes — you can rearrange icons freely.',
   },
   {
@@ -88,7 +88,7 @@ const DATA_MAP_ROWS = [
   },
   {
     category: 'Device profile details',
-    whatIsSaved: 'Device name, model code (e.g. SM-A156U, SM-A166U), launcher grid size & detection source, installed app list',
+    whatIsSaved: 'Device name, model code (e.g. SM-A156U, SM-A166U, SL112C), launcher grid size & detection source, installed app list',
     whereItLives: 'Browser storage + Cloud Vault (.data/icon-sync-vault.json)',
     sharedExternally: 'Never',
   },

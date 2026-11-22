@@ -43,6 +43,7 @@ interface AndroidIconProps {
   tint: string;
   size?: 'xs' | 'sm' | 'md' | 'lg';
   isPlaceholder?: boolean;
+  customIconArt?: string;
   className?: string;
 }
 
@@ -95,18 +96,34 @@ export function AndroidIcon({
   tint,
   size = 'md',
   isPlaceholder = false,
+  customIconArt,
   className = '',
 }: AndroidIconProps) {
+  const [artFailed, setArtFailed] = React.useState(false);
+  React.useEffect(() => {
+    setArtFailed(false);
+  }, [customIconArt]);
+
   const IconComp = ICON_MAP[iconKey] ?? Smartphone;
   const dims = SIZE_STYLES[size];
+  const showCustomArt = Boolean(customIconArt) && !artFailed;
 
   if (isPlaceholder) {
     return (
       <div
-        className={`relative ${dims.box} flex items-center justify-center text-white/75 shrink-0 select-none border border-dashed border-white/70 bg-[#1F2937]/65 backdrop-blur-xs ${className}`}
+        className={`relative ${dims.box} flex items-center justify-center text-white/75 shrink-0 select-none border border-dashed border-white/70 bg-[#1F2937]/65 backdrop-blur-xs overflow-hidden ${className}`}
         aria-hidden="true"
       >
-        <IconComp className={`${dims.icon} opacity-60`} />
+        {showCustomArt ? (
+          <img
+            src={customIconArt}
+            alt=""
+            onError={() => setArtFailed(true)}
+            className="w-full h-full object-cover opacity-55"
+          />
+        ) : (
+          <IconComp className={`${dims.icon} opacity-60`} />
+        )}
         {size !== 'xs' && (
           <span
             className={`absolute -bottom-1 -right-1 ${dims.badge} rounded-full bg-[#111827] border border-white/75 text-emerald-300 flex items-center justify-center shadow-sm`}
@@ -114,6 +131,26 @@ export function AndroidIcon({
             <Download className="w-2.5 h-2.5" />
           </span>
         )}
+      </div>
+    );
+  }
+
+  if (showCustomArt) {
+    return (
+      <div
+        className={`${dims.box} overflow-hidden shadow-sm shrink-0 select-none ${className}`}
+        style={{
+          backgroundColor: tint,
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 6px rgba(0,0,0,0.22)',
+        }}
+        aria-hidden="true"
+      >
+        <img
+          src={customIconArt}
+          alt=""
+          onError={() => setArtFailed(true)}
+          className="w-full h-full object-cover"
+        />
       </div>
     );
   }

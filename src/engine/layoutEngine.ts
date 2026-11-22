@@ -36,6 +36,7 @@ import {
   GridConfidence,
   GridDetectionSource,
   HomeScreenPage,
+  IconArtEntry,
   LauncherGridCapability,
   LayoutBackupSnapshot,
   MergeOptions,
@@ -47,6 +48,7 @@ import {
 import { IntegrityFinding } from '../types/diagnostics';
 import {
   sanitizeHexColor,
+  sanitizeIconArtDataUri,
   sanitizePackageName,
   sanitizePlayStoreUrl,
   sanitizeText,
@@ -160,6 +162,25 @@ export const LAUNCHER_GRID_CAPABILITIES: LauncherGridCapability[] = [
     detectionNotes:
       'Minimalist & custom launchers often hide workspace bounds from system APIs; report your grid manually so Icon Sync maps slots accurately.',
   },
+  {
+    id: 'quickstep-aosp',
+    launcherName: 'Quickstep Launcher (AOSP)',
+    packageName: 'com.android.launcher3',
+    supportsProviderQuery: false,
+    supportsAccessibilityDetect: true,
+    allowsCustomGrid: false,
+    minCols: 4,
+    maxCols: 5,
+    minRows: 4,
+    maxRows: 5,
+    presets: [
+      { cols: 4, rows: 4, label: '4 × 4 (Large)' },
+      { cols: 4, rows: 5, label: '4 × 5 (Icon 5 Default)' },
+      { cols: 5, rows: 5, label: '5 × 5 (Compact)' },
+    ],
+    detectionNotes:
+      'Stock Android 13 Quickstep launcher (e.g., Cricket Icon 5 SL112C) defaults to a fixed 4×5 grid; Icon Sync reads icon coordinates via Accessibility bounds or OEM profile.',
+  },
 ];
 
 export function getLauncherCapability(launcherName: string): LauncherGridCapability {
@@ -170,6 +191,9 @@ export function getLauncherCapability(launcherName: string): LauncherGridCapabil
   if (lower.includes('lawnchair')) return LAUNCHER_GRID_CAPABILITIES[3];
   if (lower.includes('mini') || lower.includes('niagara') || lower.includes('smart')) {
     return LAUNCHER_GRID_CAPABILITIES[4];
+  }
+  if (lower.includes('quickstep') || lower.includes('aosp')) {
+    return LAUNCHER_GRID_CAPABILITIES[5];
   }
   return {
     id: 'generic-android',
@@ -215,6 +239,9 @@ export function buildPlayStoreUrl(packageName: string): string {
 }
 
 export function cloneDeep<T>(value: T): T {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(value);
+  }
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
@@ -346,14 +373,212 @@ export function scaleCoordinate(
   return Math.max(0, Math.min(usableDst, Math.round(ratio * usableDst)));
 }
 
-export function computeChecksum(payload: unknown): string {
-  const str = JSON.stringify(payload);
+const SHARED_TEXT_ENCODER = new TextEncoder();
+
+function computeChecksumFromJson(str: string): string {
   let hash = 2166136261;
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0').toUpperCase();
+}
+
+export function computeChecksum(payload: unknown): string {
+  return computeChecksumFromJson(JSON.stringify(payload));
+}
+
+export function generatePortableIconArtSvgDataUri(
+  label: string,
+  tint: string,
+  iconKey: string
+): string {
+  const safeColor = sanitizeHexColor(tint, '#334155');
+  const safeLabel = (sanitizeText(label, 24) || 'App')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const glyphText = safeLabel.slice(0, 2).toUpperCase();
+  const safeKey = (sanitizeText(iconKey, 24) || 'app').replace(/[^a-zA-Z0-9-]/g, '');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" data-icon-key="${safeKey}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/><stop offset="100%" stop-color="#000000" stop-opacity="0.16"/></linearGradient></defs><rect x="4" y="4" width="88" height="88" rx="24" fill="${safeColor}"/><rect x="4" y="4" width="88" height="88" rx="24" fill="url(#g)"/><text x="48" y="56" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="700" fill="#ffffff">${glyphText}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+export function collectDeviceIconArtMap(
+  device: DeviceProfile
+): Record<string, IconArtEntry> {
+  const assets: Record<string, IconArtEntry> = {};
+
+  const recordApp = (app: Omit<AppIconItem, 'col' | 'row'>) => {
+    const pkg = sanitizePackageName(app.packageName);
+    const existing = assets[pkg];
+    const customUri = sanitizeIconArtDataUri(app.customIconArt);
+    if (existing && !customUri) return;
+    assets[pkg] = {
+      packageName: pkg,
+      label: sanitizeText(app.label, 60) || 'App',
+      iconKey: sanitizeText(app.iconKey, 40) || 'smartphone',
+      tint: sanitizeHexColor(app.tint, '#334155'),
+      dataUri:
+        customUri ??
+        generatePortableIconArtSvgDataUri(app.label, app.tint, app.iconKey),
+    };
+  };
+
+  for (const d of device.dock) recordApp(d);
+  for (const scr of device.screens) {
+    for (const ic of scr.icons) recordApp(ic);
+    for (const fl of scr.folders) {
+      for (const app of fl.apps) recordApp(app);
+    }
+  }
+
+  return assets;
+}
+
+export function estimateIconArtPayload(device: DeviceProfile): {
+  uniqueIconCount: number;
+  artBytes: number;
+} {
+  const assets = collectDeviceIconArtMap(device);
+  const keys = Object.keys(assets);
+  const artBytes =
+    keys.length === 0
+      ? 0
+      : SHARED_TEXT_ENCODER.encode(JSON.stringify(assets)).length;
+  return {
+    uniqueIconCount: keys.length,
+    artBytes,
+  };
+}
+
+export function backupIncludesIconArt(
+  backup?: LayoutBackupSnapshot | null
+): boolean {
+  if (!backup) return false;
+  if (backup.includesIconArt === true) return true;
+  if (backup.iconArtAssets && Object.keys(backup.iconArtAssets).length > 0) {
+    return true;
+  }
+  for (const d of backup.dock ?? []) {
+    if (d.customIconArt) return true;
+  }
+  for (const scr of backup.screens ?? []) {
+    for (const ic of scr.icons ?? []) {
+      if (ic.customIconArt) return true;
+    }
+    for (const fl of scr.folders ?? []) {
+      for (const app of fl.apps ?? []) {
+        if (app.customIconArt) return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function getBackupIconArtCount(
+  backup?: LayoutBackupSnapshot | null
+): number {
+  if (!backup || !backupIncludesIconArt(backup)) return 0;
+  if (backup.iconArtAssets && Object.keys(backup.iconArtAssets).length > 0) {
+    return Object.keys(backup.iconArtAssets).length;
+  }
+  const pkgs = new Set<string>();
+  for (const d of backup.dock ?? []) pkgs.add(d.packageName);
+  for (const scr of backup.screens ?? []) {
+    for (const ic of scr.icons ?? []) pkgs.add(ic.packageName);
+    for (const fl of scr.folders ?? []) {
+      for (const app of fl.apps ?? []) pkgs.add(app.packageName);
+    }
+  }
+  return pkgs.size;
+}
+
+export function computeBackupChecksum(
+  screens: HomeScreenPage[],
+  dock: DeviceProfile['dock'],
+  gridCols: number,
+  gridRows: number,
+  iconArtAssets?: Record<string, IconArtEntry>
+): string {
+  const coreSerialized = JSON.stringify({ screens, dock });
+  const hasArt = Boolean(iconArtAssets && Object.keys(iconArtAssets).length > 0);
+  const baseInput = coreSerialized.endsWith('}')
+    ? `${coreSerialized.slice(0, -1)},"gridCols":${gridCols},"gridRows":${gridRows}`
+    : JSON.stringify({ screens, dock, gridCols, gridRows });
+
+  const checksumInput = hasArt
+    ? coreSerialized.endsWith('}')
+      ? `${baseInput},"iconArtAssets":${JSON.stringify(iconArtAssets)}}`
+      : JSON.stringify({ screens, dock, gridCols, gridRows, iconArtAssets })
+    : coreSerialized.endsWith('}')
+    ? `${baseInput}}`
+    : baseInput;
+
+  return computeChecksumFromJson(checksumInput);
+}
+
+function stripIconArtFromScreens(screens: HomeScreenPage[]): HomeScreenPage[] {
+  return screens.map((scr) => ({
+    ...scr,
+    icons: scr.icons.map(({ customIconArt: _omitted, ...rest }) => rest),
+    folders: scr.folders.map((fl) => ({
+      ...fl,
+      apps: fl.apps.map(({ customIconArt: _omitted, ...rest }) => rest),
+    })),
+  }));
+}
+
+function stripIconArtFromDock(
+  dock: DeviceProfile['dock']
+): DeviceProfile['dock'] {
+  return dock.map(({ customIconArt: _omitted, ...rest }) => rest);
+}
+
+function computeStatsAndChecksum(
+  screens: HomeScreenPage[],
+  dock: DeviceProfile['dock'],
+  gridCols: number,
+  gridRows: number,
+  iconArtAssets?: Record<string, IconArtEntry>
+): { stats: BackupStats; checksum: string } {
+  let iconCount = 0;
+  let folderCount = 0;
+  let nestedAppCount = 0;
+  let widgetCount = 0;
+  let syncedWidgetCount = 0;
+
+  for (const scr of screens) {
+    iconCount += scr.icons.length;
+    folderCount += scr.folders.length;
+    for (const f of scr.folders) {
+      nestedAppCount += f.apps.length;
+    }
+    widgetCount += scr.widgets.length;
+    for (const w of scr.widgets) {
+      if (w.syncEnabled) syncedWidgetCount++;
+    }
+  }
+
+  const hasArt = Boolean(iconArtAssets && Object.keys(iconArtAssets).length > 0);
+  const coreSerialized = hasArt
+    ? JSON.stringify({ screens, dock, iconArtAssets })
+    : JSON.stringify({ screens, dock });
+
+  return {
+    stats: {
+      screenCount: screens.length,
+      iconCount,
+      folderCount,
+      nestedAppCount,
+      widgetCount,
+      syncedWidgetCount,
+      dockCount: dock.length,
+      iconArtCount: hasArt ? Object.keys(iconArtAssets!).length : 0,
+      bytes: SHARED_TEXT_ENCODER.encode(coreSerialized).length,
+    },
+    checksum: computeBackupChecksum(screens, dock, gridCols, gridRows, iconArtAssets),
+  };
 }
 
 export function computeBackupStats(
@@ -373,7 +598,9 @@ export function computeBackupStats(
       nestedAppCount += f.apps.length;
     }
     widgetCount += scr.widgets.length;
-    syncedWidgetCount += scr.widgets.filter((w) => w.syncEnabled).length;
+    for (const w of scr.widgets) {
+      if (w.syncEnabled) syncedWidgetCount++;
+    }
   }
 
   const serialized = JSON.stringify({ screens, dock });
@@ -386,7 +613,7 @@ export function computeBackupStats(
     widgetCount,
     syncedWidgetCount,
     dockCount: dock.length,
-    bytes: new TextEncoder().encode(serialized).length,
+    bytes: SHARED_TEXT_ENCODER.encode(serialized).length,
   };
 }
 
@@ -399,17 +626,23 @@ export function buildBackupSnapshot(
     storage: 'cloud' | 'local';
     createdAt?: string;
     corruptChecksum?: boolean;
+    includeIconArt?: boolean;
   }
 ): LayoutBackupSnapshot {
-  const screens = cloneDeep(device.screens);
-  const dock = cloneDeep(device.dock);
-  const stats = computeBackupStats(screens, dock);
-  const realChecksum = computeChecksum({
+  const includeIconArt = Boolean(meta.includeIconArt);
+  const rawScreens = cloneDeep(device.screens);
+  const rawDock = cloneDeep(device.dock);
+  const screens = includeIconArt ? rawScreens : stripIconArtFromScreens(rawScreens);
+  const dock = includeIconArt ? rawDock : stripIconArtFromDock(rawDock);
+  const iconArtAssets = includeIconArt ? collectDeviceIconArtMap(device) : undefined;
+
+  const { stats, checksum: realChecksum } = computeStatsAndChecksum(
     screens,
     dock,
-    gridCols: device.gridCols,
-    gridRows: device.gridRows,
-  });
+    device.gridCols,
+    device.gridRows,
+    iconArtAssets
+  );
 
   return {
     id: meta.id ?? uid('bk'),
@@ -425,6 +658,8 @@ export function buildBackupSnapshot(
     gridRows: device.gridRows,
     gridDetectionSource: device.gridDetectionSource ?? 'auto-accessibility',
     wallpaperId: device.wallpaperId,
+    includesIconArt: includeIconArt,
+    ...(includeIconArt && iconArtAssets ? { iconArtAssets } : {}),
     screens,
     dock,
     stats,
@@ -521,8 +756,59 @@ export function validateBackupPayload(raw: unknown): BackupValidationResult {
     );
   }
 
-  const stats = computeBackupStats(screens, dock);
-  const expectedChecksum = computeChecksum({ screens, dock, gridCols, gridRows });
+  const rawIconArtAssets =
+    obj.iconArtAssets && typeof obj.iconArtAssets === 'object' && !Array.isArray(obj.iconArtAssets)
+      ? (obj.iconArtAssets as Record<string, unknown>)
+      : undefined;
+  let sanitizedIconArtAssets: Record<string, IconArtEntry> | undefined;
+  if (rawIconArtAssets) {
+    const cleanAssets: Record<string, IconArtEntry> = {};
+    for (const [rawPkg, rawEntry] of Object.entries(rawIconArtAssets)) {
+      if (!rawEntry || typeof rawEntry !== 'object') continue;
+      const entry = rawEntry as Record<string, unknown>;
+      const pkg = sanitizePackageName(entry.packageName ?? rawPkg);
+      const safeUri = sanitizeIconArtDataUri(entry.dataUri);
+      if (!safeUri) continue;
+      cleanAssets[pkg] = {
+        packageName: pkg,
+        label: sanitizeText(entry.label, 60) || 'App',
+        iconKey: sanitizeText(entry.iconKey, 40) || 'smartphone',
+        tint: sanitizeHexColor(entry.tint, '#334155'),
+        dataUri: safeUri,
+      };
+    }
+    if (Object.keys(cleanAssets).length > 0) {
+      sanitizedIconArtAssets = cleanAssets;
+    }
+  }
+
+  for (const s of screens) {
+    for (const ic of s.icons) {
+      if (ic.customIconArt !== undefined) {
+        ic.customIconArt = sanitizeIconArtDataUri(ic.customIconArt);
+      }
+    }
+    for (const f of s.folders) {
+      for (const app of f.apps) {
+        if (app.customIconArt !== undefined) {
+          app.customIconArt = sanitizeIconArtDataUri(app.customIconArt);
+        }
+      }
+    }
+  }
+  for (const d of dock) {
+    if (d.customIconArt !== undefined) {
+      d.customIconArt = sanitizeIconArtDataUri(d.customIconArt);
+    }
+  }
+
+  const { stats, checksum: expectedChecksum } = computeStatsAndChecksum(
+    screens,
+    dock,
+    gridCols,
+    gridRows,
+    sanitizedIconArtAssets
+  );
 
   if (typeof obj.checksum === 'string' && obj.checksum.trim() && obj.checksum !== expectedChecksum) {
     return {
@@ -533,6 +819,9 @@ export function validateBackupPayload(raw: unknown): BackupValidationResult {
       warnings,
     };
   }
+
+  const includesIconArt =
+    obj.includesIconArt === true || Boolean(sanitizedIconArtAssets);
 
   const normalized: LayoutBackupSnapshot = {
     id: typeof obj.id === 'string' && obj.id ? obj.id : uid('bk-imp'),
@@ -559,6 +848,8 @@ export function validateBackupPayload(raw: unknown): BackupValidationResult {
         ? (obj.gridDetectionSource as GridDetectionSource)
         : 'user-reported',
     wallpaperId: typeof obj.wallpaperId === 'string' ? obj.wallpaperId : 'alpine-dusk',
+    includesIconArt,
+    ...(sanitizedIconArtAssets ? { iconArtAssets: sanitizedIconArtAssets } : {}),
     screens,
     dock,
     stats,
@@ -616,6 +907,9 @@ export function repairBackupPayload(raw: unknown): {
       ic.label = sanitizeText(ic.label, 60) || 'App';
       ic.packageName = sanitizePackageName(ic.packageName);
       ic.tint = sanitizeHexColor(ic.tint, '#334155');
+      if (ic.customIconArt !== undefined) {
+        ic.customIconArt = sanitizeIconArtDataUri(ic.customIconArt);
+      }
       if (ic.playStoreUrl) {
         ic.playStoreUrl = sanitizePlayStoreUrl(ic.playStoreUrl, ic.packageName);
       }
@@ -631,6 +925,9 @@ export function repairBackupPayload(raw: unknown): {
         nested.label = sanitizeText(nested.label, 60) || 'App';
         nested.packageName = sanitizePackageName(nested.packageName);
         nested.tint = sanitizeHexColor(nested.tint, '#334155');
+        if (nested.customIconArt !== undefined) {
+          nested.customIconArt = sanitizeIconArtDataUri(nested.customIconArt);
+        }
       }
       maxCol = Math.max(maxCol, (f.col ?? 0) + 1);
       maxRow = Math.max(maxRow, (f.row ?? 0) + 1);
@@ -667,10 +964,47 @@ export function repairBackupPayload(raw: unknown): {
   }
 
   const dock = Array.isArray(obj.dock) ? (obj.dock as DeviceProfile['dock']) : [];
-  const checksum = computeChecksum({ screens: repairedScreens, dock, gridCols, gridRows });
+  for (const d of dock) {
+    if (d.customIconArt !== undefined) {
+      d.customIconArt = sanitizeIconArtDataUri(d.customIconArt);
+    }
+  }
+
+  let repairedIconArtAssets: Record<string, IconArtEntry> | undefined;
+  if (obj.iconArtAssets && typeof obj.iconArtAssets === 'object' && !Array.isArray(obj.iconArtAssets)) {
+    const cleanAssets: Record<string, IconArtEntry> = {};
+    for (const [rawPkg, rawEntry] of Object.entries(obj.iconArtAssets as Record<string, unknown>)) {
+      if (!rawEntry || typeof rawEntry !== 'object') continue;
+      const entry = rawEntry as Record<string, unknown>;
+      const pkg = sanitizePackageName(entry.packageName ?? rawPkg);
+      const safeUri = sanitizeIconArtDataUri(entry.dataUri);
+      if (!safeUri) continue;
+      cleanAssets[pkg] = {
+        packageName: pkg,
+        label: sanitizeText(entry.label, 60) || 'App',
+        iconKey: sanitizeText(entry.iconKey, 40) || 'smartphone',
+        tint: sanitizeHexColor(entry.tint, '#334155'),
+        dataUri: safeUri,
+      };
+    }
+    if (Object.keys(cleanAssets).length > 0) {
+      repairedIconArtAssets = cleanAssets;
+    }
+  }
+
+  const { stats, checksum } = computeStatsAndChecksum(
+    repairedScreens,
+    dock,
+    gridCols,
+    gridRows,
+    repairedIconArtAssets
+  );
   if (obj.checksum !== checksum) {
     changes.push(`Recomputed FNV-1a integrity checksum (${checksum})`);
   }
+
+  const includesIconArt =
+    obj.includesIconArt === true || Boolean(repairedIconArtAssets);
 
   const backup: LayoutBackupSnapshot = {
     id: typeof obj.id === 'string' && obj.id ? obj.id : uid('bk-rep'),
@@ -692,9 +1026,11 @@ export function repairBackupPayload(raw: unknown): {
     gridRows,
     gridDetectionSource: 'user-reported',
     wallpaperId: typeof obj.wallpaperId === 'string' ? obj.wallpaperId : 'alpine-dusk',
+    includesIconArt,
+    ...(repairedIconArtAssets ? { iconArtAssets: repairedIconArtAssets } : {}),
     screens: repairedScreens,
     dock,
-    stats: computeBackupStats(repairedScreens, dock),
+    stats,
     checksum,
   };
 
@@ -1094,6 +1430,32 @@ export function computeRestoreResult(
   const missingStrategy = options.missingAppStrategy ?? 'placeholder';
   const createPlaceholders = missingStrategy === 'placeholder' || missingStrategy === 'guided';
 
+  const hasIconArtInBackup = backupIncludesIconArt(backup);
+  const shouldImportIconArt =
+    hasIconArtInBackup && options.importIconArt !== false;
+  const iconArtSkipped = hasIconArtInBackup && !shouldImportIconArt;
+
+  const targetLocalStyleByPkg = new Map<
+    string,
+    { iconKey: string; tint: string; customIconArt?: string }
+  >();
+  const recordTargetStyle = (app: Omit<AppIconItem, 'col' | 'row'>) => {
+    if (!targetLocalStyleByPkg.has(app.packageName)) {
+      targetLocalStyleByPkg.set(app.packageName, {
+        iconKey: app.iconKey,
+        tint: app.tint,
+        customIconArt: app.customIconArt,
+      });
+    }
+  };
+  for (const d of targetDevice.dock) recordTargetStyle(d);
+  for (const scr of targetDevice.screens) {
+    for (const ic of scr.icons) recordTargetStyle(ic);
+    for (const fl of scr.folders) {
+      for (const app of fl.apps) recordTargetStyle(app);
+    }
+  }
+
   let iconsAdded = 0;
   let iconsSkippedDuplicate = 0;
   let placeholdersCreated = 0;
@@ -1108,7 +1470,44 @@ export function computeRestoreResult(
   let outOfBoundsRelocated = 0;
   let itemsDroppedByCrop = 0;
   let overflowScreensCreated = 0;
+  let iconArtImported = 0;
+  const importedArtPackages = new Set<string>();
   const notes: string[] = [];
+
+  const resolveRestoredAppAppearance = <
+    T extends Omit<AppIconItem, 'col' | 'row'>
+  >(
+    app: T
+  ): T => {
+    const cloned = cloneDeep(app);
+    if (shouldImportIconArt) {
+      const asset = backup.iconArtAssets?.[cloned.packageName];
+      const hasAsset = Boolean(asset || cloned.customIconArt);
+      if (asset) {
+        cloned.iconKey = asset.iconKey || cloned.iconKey;
+        cloned.tint = asset.tint || cloned.tint;
+      }
+      if (hasAsset && !importedArtPackages.has(cloned.packageName)) {
+        importedArtPackages.add(cloned.packageName);
+        iconArtImported++;
+      }
+      return cloned;
+    }
+
+    const localStyle = targetLocalStyleByPkg.get(cloned.packageName);
+    if (localStyle) {
+      cloned.iconKey = localStyle.iconKey;
+      cloned.tint = localStyle.tint;
+      if (localStyle.customIconArt) {
+        cloned.customIconArt = localStyle.customIconArt;
+      } else {
+        delete cloned.customIconArt;
+      }
+    } else {
+      delete cloned.customIconArt;
+    }
+    return cloned;
+  };
 
   const missingMap = new Map<string, MissingAppEntry>();
 
@@ -1314,16 +1713,17 @@ export function computeRestoreResult(
         const processedApps: Omit<AppIconItem, 'col' | 'row'>[] = [];
         for (const app of f.apps) {
           const isInstalled = installedSet.has(app.packageName);
+          const styledApp = resolveRestoredAppAppearance(app);
           if (isInstalled) {
-            processedApps.push({ ...cloneDeep(app), id: uid('fa'), isPlaceholder: false });
+            processedApps.push({ ...styledApp, id: uid('fa'), isPlaceholder: false });
           } else {
-            registerMissing(app, `${srcScreen.name} → Folder "${f.name}"`);
+            registerMissing(styledApp, `${srcScreen.name} → Folder "${f.name}"`);
             if (createPlaceholders) {
               processedApps.push({
-                ...cloneDeep(app),
+                ...styledApp,
                 id: uid('fa'),
                 isPlaceholder: true,
-                playStoreUrl: buildPlayStoreUrl(app.packageName),
+                playStoreUrl: buildPlayStoreUrl(styledApp.packageName),
               });
               placeholdersCreated++;
             } else {
@@ -1387,11 +1787,12 @@ export function computeRestoreResult(
           }
         }
 
+        const styledIcon = resolveRestoredAppAppearance(ic);
         const clonedIcon: AppIconItem = {
-          ...cloneDeep(ic),
+          ...styledIcon,
           id: uid('ic'),
           isPlaceholder: !isInstalled,
-          playStoreUrl: !isInstalled ? buildPlayStoreUrl(ic.packageName) : undefined,
+          playStoreUrl: !isInstalled ? buildPlayStoreUrl(styledIcon.packageName) : undefined,
         };
 
         if (canPlaceAt(grid, cols, rows, mapped.col, mapped.row, 1, 1)) {
@@ -1458,15 +1859,16 @@ export function computeRestoreResult(
     const nextDock: DeviceProfile['dock'] = [];
     for (const d of backup.dock.slice(0, Math.max(4, cols))) {
       const isInstalled = installedSet.has(d.packageName);
+      const styledDock = resolveRestoredAppAppearance(d);
       if (isInstalled) {
-        nextDock.push({ ...cloneDeep(d), isPlaceholder: false });
+        nextDock.push({ ...styledDock, isPlaceholder: false });
       } else {
-        registerMissing(d, 'Pinned Bottom Dock');
+        registerMissing(styledDock, 'Pinned Bottom Dock');
         if (createPlaceholders) {
           nextDock.push({
-            ...cloneDeep(d),
+            ...styledDock,
             isPlaceholder: true,
-            playStoreUrl: buildPlayStoreUrl(d.packageName),
+            playStoreUrl: buildPlayStoreUrl(styledDock.packageName),
           });
           placeholdersCreated++;
         } else {
@@ -1485,6 +1887,20 @@ export function computeRestoreResult(
       );
     } else {
       notes.push(`Exact ${cols}×${rows} grid coordinates restored across ${nextScreens.length} screens.`);
+    }
+
+    if (shouldImportIconArt && iconArtImported > 0) {
+      notes.push(
+        `Imported bundled icon art for ${iconArtImported} unique app${iconArtImported === 1 ? '' : 's'}.`
+      );
+    } else if (iconArtSkipped) {
+      notes.push(
+        'Skipped bundled icon art per import settings — preserved target device icon styles.'
+      );
+    } else if (!hasIconArtInBackup) {
+      notes.push(
+        'Backup contains layout coordinates only (no bundled icon art) — using target device icons.'
+      );
     }
 
     const missingApps = Array.from(missingMap.values());
@@ -1539,6 +1955,8 @@ export function computeRestoreResult(
         outOfBoundsRelocated,
         itemsDroppedByCrop,
         overflowScreensCreated,
+        iconArtImported,
+        iconArtSkipped,
         notes,
       },
     };
@@ -1631,14 +2049,15 @@ export function computeRestoreResult(
             }
             placeholdersCreated++;
           }
+          const styledApp = resolveRestoredAppAppearance(app);
           targetFolder.apps.push({
-            ...cloneDeep(app),
+            ...styledApp,
             id: uid('fa'),
             isPlaceholder: !isInstalled,
-            playStoreUrl: !isInstalled ? buildPlayStoreUrl(app.packageName) : undefined,
+            playStoreUrl: !isInstalled ? buildPlayStoreUrl(styledApp.packageName) : undefined,
           });
-          folderPkgs.add(app.packageName);
-          existingPackages.add(app.packageName);
+          folderPkgs.add(styledApp.packageName);
+          existingPackages.add(styledApp.packageName);
           nestedAppsMerged++;
           addedAny = true;
         }
@@ -1667,11 +2086,12 @@ export function computeRestoreResult(
             placeholdersCreated++;
           }
           existingPackages.add(app.packageName);
+          const styledApp = resolveRestoredAppAppearance(app);
           keptApps.push({
-            ...cloneDeep(app),
+            ...styledApp,
             id: uid('fa'),
             isPlaceholder: !isInstalled,
-            playStoreUrl: !isInstalled ? buildPlayStoreUrl(app.packageName) : undefined,
+            playStoreUrl: !isInstalled ? buildPlayStoreUrl(styledApp.packageName) : undefined,
           });
         }
         if (keptApps.length > 0) {
@@ -1704,15 +2124,16 @@ export function computeRestoreResult(
         }
       }
       existingPackages.add(ic.packageName);
+      const styledIcon = resolveRestoredAppAppearance(ic);
       pendingIcons.push({
         preferredPage: pageIdx,
         icon: {
-          ...cloneDeep(ic),
+          ...styledIcon,
           id: uid('ic'),
           col: mapped.col,
           row: mapped.row,
           isPlaceholder: !isInstalled,
-          playStoreUrl: !isInstalled ? buildPlayStoreUrl(ic.packageName) : undefined,
+          playStoreUrl: !isInstalled ? buildPlayStoreUrl(styledIcon.packageName) : undefined,
         },
         wasOutOfBounds: mapped.wasOutOfBounds,
       });
@@ -1846,6 +2267,47 @@ export function computeRestoreResult(
     }
   }
 
+  // In Merge mode, if icon art import is enabled, also apply backup icon art onto matching existing icons
+  if (shouldImportIconArt) {
+    const backupIconByPkg = new Map<string, Omit<AppIconItem, 'col' | 'row'>>();
+    for (const d of backup.dock) backupIconByPkg.set(d.packageName, d);
+    for (const scr of backup.screens) {
+      for (const ic of scr.icons) backupIconByPkg.set(ic.packageName, ic);
+      for (const fl of scr.folders) {
+        for (const app of fl.apps) backupIconByPkg.set(app.packageName, app);
+      }
+    }
+
+    const syncExistingAppArt = <T extends Omit<AppIconItem, 'col' | 'row'>>(app: T): T => {
+      const bkIcon = backupIconByPkg.get(app.packageName);
+      const bkAsset = backup.iconArtAssets?.[app.packageName];
+      if (!bkIcon && !bkAsset) return app;
+      const next = { ...app };
+      if (bkIcon?.customIconArt) {
+        next.customIconArt = bkIcon.customIconArt;
+      }
+      if (bkAsset) {
+        next.iconKey = bkAsset.iconKey || next.iconKey;
+        next.tint = bkAsset.tint || next.tint;
+      }
+      if (!importedArtPackages.has(app.packageName)) {
+        importedArtPackages.add(app.packageName);
+        iconArtImported++;
+      }
+      return next;
+    };
+
+    nextDevice.dock = nextDevice.dock.map(syncExistingAppArt);
+    nextDevice.screens = nextDevice.screens.map((scr) => ({
+      ...scr,
+      icons: scr.icons.map(syncExistingAppArt),
+      folders: scr.folders.map((fl) => ({
+        ...fl,
+        apps: fl.apps.map(syncExistingAppArt),
+      })),
+    }));
+  }
+
   const missingApps = Array.from(missingMap.values());
 
   if (backup.gridCols !== targetGridBefore.cols || backup.gridRows !== targetGridBefore.rows) {
@@ -1856,6 +2318,19 @@ export function computeRestoreResult(
   if (foldersMerged > 0) {
     notes.push(
       `Combined ${nestedAppsMerged} unique app${nestedAppsMerged === 1 ? '' : 's'} into ${foldersMerged} existing folder${foldersMerged === 1 ? '' : 's'}.`
+    );
+  }
+  if (shouldImportIconArt && iconArtImported > 0) {
+    notes.push(
+      `Imported bundled icon art for ${iconArtImported} app${iconArtImported === 1 ? '' : 's'}.`
+    );
+  } else if (iconArtSkipped) {
+    notes.push(
+      'Skipped bundled icon art per import settings — kept target device icon styles.'
+    );
+  } else if (!hasIconArtInBackup) {
+    notes.push(
+      'Backup contains layout coordinates only (no bundled icon art) — using target device icons.'
     );
   }
   if (missingApps.length > 0) {
@@ -1914,6 +2389,8 @@ export function computeRestoreResult(
       outOfBoundsRelocated,
       itemsDroppedByCrop,
       overflowScreensCreated,
+      iconArtImported,
+      iconArtSkipped,
       notes,
     },
   };
@@ -2055,12 +2532,13 @@ export function auditWorkspaceIntegrity(
   }
 
   for (const bk of backups) {
-    const expected = computeChecksum({
-      screens: bk.screens,
-      dock: bk.dock,
-      gridCols: bk.gridCols,
-      gridRows: bk.gridRows,
-    });
+    const expected = computeBackupChecksum(
+      bk.screens,
+      bk.dock,
+      bk.gridCols,
+      bk.gridRows,
+      bk.iconArtAssets
+    );
     if (bk.checksum !== expected) {
       findings.push({
         id: `chk-${bk.id}`,

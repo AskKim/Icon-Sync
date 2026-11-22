@@ -5,6 +5,8 @@
 Icon Sync helps Android owners capture, organize, back up, and migrate home screens, supplemental pages, folders, dock shortcuts, and widget configurations across devices and launchers — including **Google Pixel**, **Samsung Galaxy A15**, **Samsung Galaxy A16**, **Samsung Galaxy S24 Ultra**, **Galaxy Tab S9 (Nova Launcher `6×6`)**, and custom/minimalist launchers (registerable via **+ Add Device**) — without losing layout structure or re-dragging every icon by hand.
 
 > **New to this codebase or exploring with an AI assistant?** Read **[ARCHITECTURE.md](./ARCHITECTURE.md)** for a beginner-friendly 60-second mental model, annotated file tree, data flow diagrams, and "How do I change X?" recipes.
+>
+> **Persistence Note:** We will not be adding a real database for this project. Icon Sync intentionally stores workspace state in `.data/icon-sync-vault.json` (via the Express API), browser `localStorage`, and portable `.json` backup exports.
 
 ---
 

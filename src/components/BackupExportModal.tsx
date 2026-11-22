@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
-import { Cloud, Download, HardDrive, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Cloud, Download, HardDrive, Image as ImageIcon, X } from 'lucide-react';
 import { DeviceProfile } from '../types/layout';
-import { computeBackupStats } from '../engine/layoutEngine';
+import {
+  computeBackupStats,
+  estimateIconArtPayload,
+} from '../engine/layoutEngine';
 
 interface BackupExportModalProps {
   device: DeviceProfile;
@@ -10,6 +13,7 @@ interface BackupExportModalProps {
     name: string;
     notes: string;
     destination: 'cloud' | 'local' | 'both';
+    includeIconArt: boolean;
   }) => void;
 }
 
@@ -25,8 +29,17 @@ export function BackupExportModal({
   const [name, setName] = useState(defaultName);
   const [notes, setNotes] = useState('');
   const [destination, setDestination] = useState<'cloud' | 'local' | 'both'>('both');
+  const [includeIconArt, setIncludeIconArt] = useState<boolean>(true);
 
-  const stats = computeBackupStats(device.screens, device.dock);
+  const stats = useMemo(
+    () => computeBackupStats(device.screens, device.dock),
+    [device.screens, device.dock]
+  );
+  const artEstimate = useMemo(() => estimateIconArtPayload(device), [device]);
+  const estimatedTotalKb = (
+    (stats.bytes + (includeIconArt ? artEstimate.artBytes : 0)) /
+    1024
+  ).toFixed(1);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +47,7 @@ export function BackupExportModal({
       name: name.trim() || defaultName,
       notes: notes.trim(),
       destination,
+      includeIconArt,
     });
   };
 
@@ -119,6 +133,39 @@ export function BackupExportModal({
                 placeholder="e.g. Before upgrading to Pixel 10, includes synced Tasks and Weather widgets"
                 className="w-full px-3.5 py-2 text-sm bg-[#F9FAFB] border border-[#E4E7EC] rounded-lg focus:outline-none focus:border-[#166534] resize-none"
               />
+            </div>
+
+            {/* Backup settings */}
+            <div className="p-3.5 rounded-xl bg-[#F9FAFB] border border-[#E4E7EC] space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-[#374151]">
+                  Backup Settings
+                </span>
+                <span className="text-[11px] font-mono tabular-nums text-[#6B7280]">
+                  Est. {estimatedTotalKb} KB
+                </span>
+              </div>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeIconArt}
+                  onChange={(e) => setIncludeIconArt(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-[#CBD5E1] accent-[#166534] shrink-0"
+                />
+                <div className="min-w-0">
+                  <span className="text-xs font-medium text-[#111827] flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-[#166534]" />
+                    Back up app icon art
+                  </span>
+                  <p className="text-[11px] text-[#6B7280] mt-0.5 leading-snug">
+                    {includeIconArt
+                      ? `Bundles portable icon artwork and custom icons for ${artEstimate.uniqueIconCount} unique apps (+${(
+                          artEstimate.artBytes / 1024
+                        ).toFixed(1)} KB).`
+                      : 'Layout coordinates and package IDs only — excludes bundled icon artwork for a smaller snapshot.'}
+                  </p>
+                </div>
+              </label>
             </div>
 
             <div>

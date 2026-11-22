@@ -168,3 +168,48 @@ export function clampGridDimension(value: unknown, fallback: number): number {
   if (!Number.isFinite(num)) return fallback;
   return Math.max(3, Math.min(8, Math.round(num)));
 }
+
+/**
+ * Validates embedded icon artwork data URIs (PNG, JPEG, WebP, or static SVG)
+ * while rejecting scripts, event handlers, or oversized blobs.
+ */
+export function sanitizeIconArtDataUri(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 65536) return undefined;
+
+  if (/^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^data:image\/svg\+xml(;charset=utf-8)?;base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    try {
+      const b64 = trimmed.split(',')[1] ?? '';
+      const decoded =
+        typeof atob === 'function'
+          ? atob(b64)
+          : Buffer.from(b64, 'base64').toString('utf-8');
+      if (/<script|on\w+\s*=|javascript:|<foreignObject/i.test(decoded)) {
+        return undefined;
+      }
+      return trimmed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (/^data:image\/svg\+xml(;charset=utf-8)?,/i.test(trimmed)) {
+    try {
+      const rawBody = trimmed.slice(trimmed.indexOf(',') + 1);
+      const decoded = decodeURIComponent(rawBody);
+      if (/<script|on\w+\s*=|javascript:|<foreignObject/i.test(decoded)) {
+        return undefined;
+      }
+      return trimmed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}

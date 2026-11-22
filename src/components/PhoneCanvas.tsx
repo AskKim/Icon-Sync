@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -52,36 +52,53 @@ export function PhoneCanvas({
   const currentScreen: HomeScreenPage | undefined = device.screens[safeIndex];
   const wallpaper = WALLPAPERS.find((w) => w.id === device.wallpaperId) ?? WALLPAPERS[0];
 
-  if (!currentScreen) {
-    return null;
-  }
+  useEffect(() => {
+    setWallpaperFailed(false);
+  }, [wallpaper.id]);
 
-  const occupancy = computeOccupancyGrid(currentScreen, device.gridCols, device.gridRows);
-  const openFolder: FolderItem | undefined = currentScreen.folders.find(
-    (f) => f.id === openFolderId
-  );
-
-  const emptyCells: { col: number; row: number }[] = [];
-  for (let r = 0; r < device.gridRows; r++) {
-    for (let c = 0; c < device.gridCols; c++) {
-      if (!occupancy[r][c]) {
-        emptyCells.push({ col: c, row: r });
+  const { emptyCells, outOfBoundsCount } = useMemo(() => {
+    if (!currentScreen) {
+      return { emptyCells: [] as { col: number; row: number }[], outOfBoundsCount: 0 };
+    }
+    const occupancy = computeOccupancyGrid(currentScreen, device.gridCols, device.gridRows);
+    const cells: { col: number; row: number }[] = [];
+    for (let r = 0; r < device.gridRows; r++) {
+      for (let c = 0; c < device.gridCols; c++) {
+        if (!occupancy[r][c]) {
+          cells.push({ col: c, row: r });
+        }
       }
     }
-  }
-
-  const isTablet = device.formFactor === 'tablet';
-  const isDenseGrid = device.gridCols >= 6 || device.gridRows >= 6;
-  const outOfBoundsCount =
-    currentScreen.icons.filter((i) => i.col >= device.gridCols || i.row >= device.gridRows).length +
-    currentScreen.folders.filter((f) => f.col >= device.gridCols || f.row >= device.gridRows).length +
-    currentScreen.widgets.filter(
-      (w) =>
+    let oob = 0;
+    for (const i of currentScreen.icons) {
+      if (i.col >= device.gridCols || i.row >= device.gridRows) oob++;
+    }
+    for (const f of currentScreen.folders) {
+      if (f.col >= device.gridCols || f.row >= device.gridRows) oob++;
+    }
+    for (const w of currentScreen.widgets) {
+      if (
         w.col >= device.gridCols ||
         w.row >= device.gridRows ||
         w.col + w.spanX > device.gridCols ||
         w.row + w.spanY > device.gridRows
-    ).length;
+      ) {
+        oob++;
+      }
+    }
+    return { emptyCells: cells, outOfBoundsCount: oob };
+  }, [currentScreen, device.gridCols, device.gridRows]);
+
+  if (!currentScreen) {
+    return null;
+  }
+
+  const openFolder: FolderItem | undefined = currentScreen.folders.find(
+    (f) => f.id === openFolderId
+  );
+
+  const isTablet = device.formFactor === 'tablet';
+  const isDenseGrid = device.gridCols >= 6 || device.gridRows >= 6;
 
   return (
     <div className="flex flex-col items-center">
@@ -141,8 +158,11 @@ export function PhoneCanvas({
           {/* Generated wallpaper image with zero-broken-image fallback */}
           {!wallpaperFailed && (
             <img
+              key={wallpaper.id}
               src={wallpaper.imageUrl}
               alt={`${wallpaper.name} wallpaper`}
+              decoding="async"
+              fetchPriority="high"
               referrerPolicy="no-referrer"
               onError={() => setWallpaperFailed(true)}
               className="absolute inset-0 w-full h-full object-cover pointer-events-none"
@@ -279,6 +299,7 @@ export function PhoneCanvas({
                         tint={icon.tint}
                         size={device.gridCols >= 6 ? 'sm' : 'md'}
                         isPlaceholder={Boolean(icon.isPlaceholder)}
+                        customIconArt={icon.customIconArt}
                       />
                       <span
                         className={`${
@@ -328,6 +349,7 @@ export function PhoneCanvas({
                             tint={app.tint}
                             size="xs"
                             isPlaceholder={Boolean(app.isPlaceholder)}
+                            customIconArt={app.customIconArt}
                           />
                         ))}
                       </div>
@@ -411,6 +433,7 @@ export function PhoneCanvas({
                     tint={app.tint}
                     size="md"
                     isPlaceholder={Boolean(app.isPlaceholder)}
+                    customIconArt={app.customIconArt}
                   />
                 </button>
               ))}
@@ -469,6 +492,7 @@ export function PhoneCanvas({
                         tint={app.tint}
                         size="md"
                         isPlaceholder={Boolean(app.isPlaceholder)}
+                        customIconArt={app.customIconArt}
                       />
                       <span
                         className={`text-[11px] truncate w-full text-center ${

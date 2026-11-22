@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -33,7 +33,6 @@ import {
 import {
   analyzeGridCompatibility,
   auditWorkspaceIntegrity,
-  computeOccupancyGrid,
   computeRestoreResult,
   repairBackupPayload,
   validateBackupPayload,
@@ -43,7 +42,10 @@ import {
   fetchServerDiagnostics,
   inspectLocalStorageCache,
 } from '../services/cloudApi';
-import { CompanionView } from './CompanionView';
+
+const LazyCompanionView = lazy(() =>
+  import('./CompanionView').then((m) => ({ default: m.CompanionView }))
+);
 
 type DevSubTab = 'health' | 'grid-lab' | 'logs' | 'faults-json' | 'android-apk';
 
@@ -116,8 +118,22 @@ export function DeveloperToolsView({
     parsed?: unknown;
   } | null>(null);
   const [copiedBundle, setCopiedBundle] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
 
-  const localCache = inspectLocalStorageCache();
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
+  const localCache = useMemo(
+    () => inspectLocalStorageCache(),
+    // Re-inspect when persisted workspace snapshots or server diagnostics refresh
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [devices, backups, serverDiag]
+  );
   const integrityFindings = useMemo(
     () => auditWorkspaceIntegrity(devices, backups),
     [devices, backups]
@@ -150,10 +166,10 @@ export function DeveloperToolsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Grid Remap Lab live computation
+  // Grid Remap Lab live computation (only when the Grid Lab tab is active)
   const labBackup = backups.find((b) => b.id === labBackupId) ?? backups[0];
   const labResult = useMemo(() => {
-    if (!labBackup) return null;
+    if (subTab !== 'grid-lab' || !labBackup) return null;
     const activeDev = devices.find((d) => d.id === activeDeviceId) ?? devices[0];
     const syntheticTarget: DeviceProfile = {
       ...activeDev,
@@ -182,7 +198,7 @@ export function DeveloperToolsView({
       gridStrategy: labStrategy,
     });
     return { compat, ...res };
-  }, [labBackup, devices, activeDeviceId, labTargetCols, labTargetRows, labStrategy]);
+  }, [subTab, labBackup, devices, activeDeviceId, labTargetCols, labTargetRows, labStrategy]);
 
   const filteredLogs = useMemo(() => {
     return logs.filter((entry) => {
@@ -229,7 +245,10 @@ export function DeveloperToolsView({
     try {
       await navigator.clipboard.writeText(JSON.stringify(buildFullDiagnosticsBundle(), null, 2));
       setCopiedBundle(true);
-      setTimeout(() => setCopiedBundle(false), 1800);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => setCopiedBundle(false), 1800);
       onNotify('success', 'Diagnostics Copied', 'Copied Icon Sync diagnostic JSON bundle to clipboard.');
     } catch {
       onNotify(
@@ -1112,10 +1131,22 @@ export function DeveloperToolsView({
       )}
 
       {/* TAB 5: ANDROID APK, KOTLIN COMPANION & GITHUB ACTIONS */}
-      {subTab === 'android-apk' && <CompanionView />}
+      {subTab === 'android-apk' && (
+        <Suspense
+          fallback={
+            <div className="bg-white border border-[#E4E7EC] rounded-2xl p-8 text-xs text-[#6B7280] text-center">
+              Loading Android Companion source viewer…
+            </div>
+          }
+        >
+          <LazyCompanionView />
+        </Suspense>
+      )}
     </div>
   );
 }
+
+type CellKind = 'widget' | 'folder' | 'icon' | 'empty';
 
 function OccupancyMatrix({
   page,
@@ -1130,27 +1161,39 @@ function OccupancyMatrix({
   highlightOutsideCols?: number;
   highlightOutsideRows?: number;
 }) {
-  const occ = computeOccupancyGrid(page, cols, rows);
-
-  const cellKind = (c: number, r: number): 'widget' | 'folder' | 'icon' | 'empty' => {
-    for (const w of page.widgets) {
-      if (c >= w.col && c < w.col + w.spanX && r >= w.row && r < w.row + w.spanY) {
-        return 'widget';
+  const cellKinds = useMemo(() => {
+    const matrix: CellKind[][] = Array.from({ length: rows }, () =>
+      Array<CellKind>(cols).fill('empty')
+    );
+    for (const ic of page.icons) {
+      if (ic.row >= 0 && ic.row < rows && ic.col >= 0 && ic.col < cols) {
+        matrix[ic.row][ic.col] = 'icon';
       }
     }
-    if (page.folders.some((f) => f.col === c && f.row === r)) return 'folder';
-    if (page.icons.some((i) => i.col === c && i.row === r)) return 'icon';
-    return occ[r]?.[c] ? 'icon' : 'empty';
-  };
+    for (const fl of page.folders) {
+      if (fl.row >= 0 && fl.row < rows && fl.col >= 0 && fl.col < cols) {
+        matrix[fl.row][fl.col] = 'folder';
+      }
+    }
+    for (const w of page.widgets) {
+      const rEnd = Math.min(rows, w.row + w.spanY);
+      const cEnd = Math.min(cols, w.col + w.spanX);
+      for (let r = Math.max(0, w.row); r < rEnd; r++) {
+        for (let c = Math.max(0, w.col); c < cEnd; c++) {
+          matrix[r][c] = 'widget';
+        }
+      }
+    }
+    return matrix;
+  }, [page, cols, rows]);
 
   return (
     <div
       className="grid gap-1"
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
-      {Array.from({ length: rows }).map((_, r) =>
-        Array.from({ length: cols }).map((__, c) => {
-          const kind = cellKind(c, r);
+      {cellKinds.map((rowCells, r) =>
+        rowCells.map((kind, c) => {
           const outside =
             (highlightOutsideCols !== undefined && c >= highlightOutsideCols) ||
             (highlightOutsideRows !== undefined && r >= highlightOutsideRows);

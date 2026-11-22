@@ -15,7 +15,7 @@ on:
       build_release:
         description: 'Build release APK (uses signing secrets if configured)'
         required: false
-        default: 'true'
+        default: true
         type: boolean
 
 concurrency:
@@ -75,7 +75,7 @@ jobs:
           fi
 
       - name: Decode release keystore & assemble signed Release APK
-        if: steps.signing.outputs.available == 'true' && (github.event_name != 'pull_request')
+        if: steps.signing.outputs.available == 'true' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.build_release)
         working-directory: android
         env:
           KEYSTORE_B64: ${{ secrets.ICONSYNC_KEYSTORE_BASE64 }}
@@ -105,7 +105,7 @@ jobs:
           retention-days: 30
 
       - name: Upload Release APK artifact (if signed)
-        if: steps.signing.outputs.available == 'true' && (github.event_name != 'pull_request')
+        if: steps.signing.outputs.available == 'true' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.build_release)
         uses: actions/upload-artifact@v4
         with:
           name: IconSync-release-apk

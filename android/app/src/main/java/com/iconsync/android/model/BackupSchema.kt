@@ -27,7 +27,8 @@ data class IconPlacement(
     val label: String,
     val col: Int,
     val row: Int,
-    val isPlaceholder: Boolean = false
+    val isPlaceholder: Boolean = false,
+    val customIconArt: String? = null
 )
 
 @Serializable
@@ -65,6 +66,15 @@ data class HomeScreenPage(
 )
 
 @Serializable
+data class IconArtEntry(
+    val packageName: String,
+    val label: String,
+    val iconKey: String,
+    val tint: String,
+    val dataUri: String
+)
+
+@Serializable
 data class LayoutBackupSnapshot(
     val id: String,
     val name: String,
@@ -75,6 +85,8 @@ data class LayoutBackupSnapshot(
     val gridCols: Int,
     val gridRows: Int,
     val gridDetectionSource: GridDetectionSource = GridDetectionSource.AUTO_ACCESSIBILITY,
+    val includesIconArt: Boolean = false,
+    val iconArtAssets: Map<String, IconArtEntry>? = null,
     val screens: List<HomeScreenPage>,
     val checksum: String = ""
 )

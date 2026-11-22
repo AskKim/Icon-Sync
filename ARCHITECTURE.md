@@ -110,6 +110,8 @@ Think of **Icon Sync** as a visual spreadsheet editor for Android phone home scr
 5. `server.ts` strips dangerous keys, validates array bounds, writes to a temporary file inside `.data/` with owner-only `0600` permissions, and atomically renames it to `.data/icon-sync-vault.json`.
 6. If the server is unreachable, `App.tsx` surfaces a red **Failed** banner with one-click **Retry Cloud Sync** and **Download JSON Backup** recovery buttons.
 
+> **Note:** We will not be adding a real database for this project. Local JSON file persistence (`.data/icon-sync-vault.json`), browser `localStorage`, and portable `.json` exports are the intended storage design.
+
 ### B. How Cross-Grid Import Works (Example: `6×6` Backup → `5×4` Mini Launcher)
 When you open **Import / Restore** and choose a `6×6` backup (36 cells/page) targeting a `5×4` device (20 cells/page):
 1. `analyzeGridCompatibility(targetDevice, backup)` inspects every widget, folder, and icon coordinate.

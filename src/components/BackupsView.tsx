@@ -31,6 +31,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { LayoutBackupSnapshot } from '../types/layout';
+import { backupIncludesIconArt, getBackupIconArtCount } from '../engine/layoutEngine';
 
 type SortOption = 'newest' | 'oldest' | 'name' | 'icons';
 
@@ -273,6 +274,18 @@ export function BackupsView({
                       <span>{backup.stats.folderCount} folders</span>
                       <span aria-hidden="true">/</span>
                       <span>{backup.stats.widgetCount} widgets</span>
+                      <span aria-hidden="true">/</span>
+                      <span
+                        className={
+                          backupIncludesIconArt(backup)
+                            ? 'text-[#166534] font-medium'
+                            : 'text-[#6B7280]'
+                        }
+                      >
+                        {backupIncludesIconArt(backup)
+                          ? `icon art (${getBackupIconArtCount(backup)})`
+                          : 'no icon art'}
+                      </span>
                       <span aria-hidden="true">/</span>
                       <span>{(backup.stats.bytes / 1024).toFixed(1)} KB</span>
                       <span aria-hidden="true">/</span>

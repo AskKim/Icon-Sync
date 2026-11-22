@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Check,
   Plus,
@@ -48,32 +48,36 @@ export function WidgetSyncView({
   const [newTaskDraft, setNewTaskDraft] = useState('');
 
   // Group all widgets across all registered devices by syncKey
-  const groupedMap = new Map<string, GroupedWidgetRow>();
-  for (const device of devices) {
-    for (const screen of device.screens) {
-      for (const widget of screen.widgets) {
-        const existing = groupedMap.get(widget.syncKey);
-        if (!existing) {
-          groupedMap.set(widget.syncKey, {
-            syncKey: widget.syncKey,
-            title: widget.title,
-            provider: widget.provider,
-            representative: widget,
-            representativeDeviceId: device.id,
-            placements: [{ device, screenName: screen.name, widget }],
-          });
-        } else {
-          existing.placements.push({ device, screenName: screen.name, widget });
-          if (new Date(widget.updatedAt) > new Date(existing.representative.updatedAt)) {
-            existing.representative = widget;
-            existing.representativeDeviceId = device.id;
+  const rows = useMemo(() => {
+    const groupedMap = new Map<string, GroupedWidgetRow & { repUpdatedAtMs: number }>();
+    for (const device of devices) {
+      for (const screen of device.screens) {
+        for (const widget of screen.widgets) {
+          const updatedAtMs = Date.parse(widget.updatedAt) || 0;
+          const existing = groupedMap.get(widget.syncKey);
+          if (!existing) {
+            groupedMap.set(widget.syncKey, {
+              syncKey: widget.syncKey,
+              title: widget.title,
+              provider: widget.provider,
+              representative: widget,
+              representativeDeviceId: device.id,
+              repUpdatedAtMs: updatedAtMs,
+              placements: [{ device, screenName: screen.name, widget }],
+            });
+          } else {
+            existing.placements.push({ device, screenName: screen.name, widget });
+            if (updatedAtMs > existing.repUpdatedAtMs) {
+              existing.representative = widget;
+              existing.representativeDeviceId = device.id;
+              existing.repUpdatedAtMs = updatedAtMs;
+            }
           }
         }
       }
     }
-  }
-
-  const rows = Array.from(groupedMap.values());
+    return Array.from(groupedMap.values());
+  }, [devices]);
 
   return (
     <div className="space-y-6">

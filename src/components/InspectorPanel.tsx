@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   ExternalLink,
@@ -27,10 +27,14 @@ import {
 } from '../data/catalog';
 import {
   formatGridSourceLabel,
+  generatePortableIconArtSvgDataUri,
   getLauncherCapability,
   LAUNCHER_GRID_CAPABILITIES,
 } from '../engine/layoutEngine';
-import { sanitizePlayStoreUrl } from '../utils/sanitize';
+import {
+  sanitizeIconArtDataUri,
+  sanitizePlayStoreUrl,
+} from '../utils/sanitize';
 import { AndroidIcon } from './AndroidIcon';
 
 interface InspectorPanelProps {
@@ -172,11 +176,42 @@ export function InspectorPanel({
     onSelect({ type: 'screen', id: currentScreen.id });
   };
 
-  const filteredCatalog = ANDROID_APP_CATALOG.filter(
-    (a) =>
-      a.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.packageName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredCatalog = useMemo(() => {
+    if (selection.type !== 'empty-cell' || drawerTab !== 'apps') return [];
+    const q = searchQuery.toLowerCase();
+    return ANDROID_APP_CATALOG.filter(
+      (a) =>
+        a.label.toLowerCase().includes(q) ||
+        a.packageName.toLowerCase().includes(q)
+    );
+  }, [searchQuery, selection.type, drawerTab]);
+
+  const addableApps = useMemo(() => {
+    if (!selectedFolder) return [];
+    const existingPkgs = new Set(selectedFolder.apps.map((a) => a.packageName));
+    return ANDROID_APP_CATALOG.filter((a) => !existingPkgs.has(a.packageName)).slice(0, 8);
+  }, [selectedFolder]);
+
+  const { totalIcons, totalFolders, totalNested, totalWidgets } = useMemo(() => {
+    let icons = 0;
+    let folders = 0;
+    let nested = 0;
+    let widgets = 0;
+    for (const s of device.screens) {
+      icons += s.icons.length;
+      folders += s.folders.length;
+      for (const f of s.folders) {
+        nested += f.apps.length;
+      }
+      widgets += s.widgets.length;
+    }
+    return {
+      totalIcons: icons,
+      totalFolders: folders,
+      totalNested: nested,
+      totalWidgets: widgets,
+    };
+  }, [device.screens]);
 
   // Empty cell placement view
   if (selection.type === 'empty-cell' && selection.col !== undefined && selection.row !== undefined) {
@@ -319,6 +354,7 @@ export function InspectorPanel({
               tint={selectedIcon.tint}
               size="md"
               isPlaceholder={Boolean(selectedIcon.isPlaceholder)}
+              customIconArt={selectedIcon.customIconArt}
             />
             <div className="min-w-0">
               <h3 className="text-base font-semibold text-[#111827] truncate">
@@ -408,6 +444,83 @@ export function InspectorPanel({
           </div>
         </div>
 
+        {/* Custom Icon Art controls */}
+        <div className="p-3.5 rounded-xl bg-[#F9FAFB] border border-[#E4E7EC] space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-[#374151]">App Icon Art</span>
+            <span className="text-[11px] font-mono text-[#6B7280]">
+              {selectedIcon.customIconArt ? 'Custom artwork' : 'Default system icon'}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="px-2.5 py-1.5 text-xs font-medium text-[#111827] bg-white border border-[#E4E7EC] hover:border-[#166534] rounded-lg cursor-pointer">
+              Upload PNG/SVG
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const safeUri = sanitizeIconArtDataUri(reader.result);
+                    if (!safeUri) return;
+                    updateCurrentScreen((scr) => ({
+                      ...scr,
+                      icons: scr.icons.map((ic) =>
+                        ic.id === selectedIcon.id
+                          ? { ...ic, customIconArt: safeUri }
+                          : ic
+                      ),
+                    }));
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                const monogramArt = generatePortableIconArtSvgDataUri(
+                  selectedIcon.label,
+                  '#166534',
+                  selectedIcon.iconKey
+                );
+                updateCurrentScreen((scr) => ({
+                  ...scr,
+                  icons: scr.icons.map((ic) =>
+                    ic.id === selectedIcon.id
+                      ? { ...ic, customIconArt: monogramArt }
+                      : ic
+                  ),
+                }));
+              }}
+              className="px-2.5 py-1.5 text-xs font-medium text-[#166534] bg-[#166534]/10 hover:bg-[#166534]/15 rounded-lg cursor-pointer"
+            >
+              Apply Custom Badge Art
+            </button>
+            {selectedIcon.customIconArt && (
+              <button
+                type="button"
+                onClick={() =>
+                  updateCurrentScreen((scr) => ({
+                    ...scr,
+                    icons: scr.icons.map((ic) => {
+                      if (ic.id !== selectedIcon.id) return ic;
+                      const { customIconArt: _removed, ...rest } = ic;
+                      return rest;
+                    }),
+                  }))
+                }
+                className="px-2.5 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#111827] rounded-lg cursor-pointer"
+              >
+                Reset Default
+              </button>
+            )}
+          </div>
+        </div>
+
         {currentScreen.folders.length > 0 && (
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1.5">
@@ -467,8 +580,6 @@ export function InspectorPanel({
 
   // Selected Folder Inspector
   if (selectedFolder) {
-    const existingPkgs = new Set(selectedFolder.apps.map((a) => a.packageName));
-    const addableApps = ANDROID_APP_CATALOG.filter((a) => !existingPkgs.has(a.packageName)).slice(0, 8);
 
     return (
       <div className="bg-white border border-[#E4E7EC] rounded-2xl p-6 space-y-5">
@@ -512,6 +623,7 @@ export function InspectorPanel({
                     tint={app.tint}
                     size="sm"
                     isPlaceholder={Boolean(app.isPlaceholder)}
+                    customIconArt={app.customIconArt}
                   />
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-[#111827] truncate">
@@ -870,7 +982,12 @@ export function InspectorPanel({
       <div className="bg-white border border-[#E4E7EC] rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-4">
           <div className="flex items-center gap-3">
-            <AndroidIcon iconKey={selectedDock.iconKey} tint={selectedDock.tint} size="md" />
+            <AndroidIcon
+              iconKey={selectedDock.iconKey}
+              tint={selectedDock.tint}
+              size="md"
+              customIconArt={selectedDock.customIconArt}
+            />
             <div>
               <h3 className="text-base font-semibold text-[#111827]">{selectedDock.label}</h3>
               <p className="text-xs text-[#6B7280]">Pinned Bottom Dock · {selectedDock.packageName}</p>
@@ -892,13 +1009,6 @@ export function InspectorPanel({
   }
 
   // Default: Screen & Device Layout Overview Inspector
-  const totalIcons = device.screens.reduce((acc, s) => acc + s.icons.length, 0);
-  const totalFolders = device.screens.reduce((acc, s) => acc + s.folders.length, 0);
-  const totalNested = device.screens.reduce(
-    (acc, s) => acc + s.folders.reduce((fa, f) => fa + f.apps.length, 0),
-    0
-  );
-  const totalWidgets = device.screens.reduce((acc, s) => acc + s.widgets.length, 0);
 
   return (
     <div className="bg-white border border-[#E4E7EC] rounded-2xl p-6 space-y-6">

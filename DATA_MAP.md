@@ -5,6 +5,8 @@
 
 This document maps every data element processed by Icon Sync, where it originates, how it flows through the application, where it is stored, and how it maps to Android / Google Play Data Safety declarations.
 
+> **Storage Note:** We will not be adding a real database for this project. All workspace persistence intentionally uses `.data/icon-sync-vault.json`, browser `localStorage`, and user-initiated `.json` exports.
+
 ---
 
 ## 1. End-to-End Data Flow

@@ -7,26 +7,29 @@ import {
   WidgetKind,
 } from '../types/layout';
 import { buildBackupSnapshot } from '../engine/layoutEngine';
+import wallpaperAlpineDuskUrl from '../assets/images/wallpaper_alpine_dusk_1795273635186.jpg';
+import wallpaperBotanicalStoneUrl from '../assets/images/wallpaper_botanical_stone_1795273634834.jpg';
+import wallpaperArchitecturalGlassUrl from '../assets/images/wallpaper_architectural_glass_1795273636000.jpg';
 
 export const WALLPAPERS: WallpaperOption[] = [
   {
     id: 'alpine-dusk',
     name: 'Alpine Topographic',
-    imageUrl: '/src/assets/images/wallpaper_alpine_dusk_1795273635186.jpg',
+    imageUrl: wallpaperAlpineDuskUrl,
     fallbackGradient: 'linear-gradient(160deg, #9db4b2 0%, #556b73 52%, #2c3e35 100%)',
     surfaceTone: 'dark',
   },
   {
     id: 'botanical-stone',
     name: 'River Basalt',
-    imageUrl: '/src/assets/images/wallpaper_botanical_stone_1795273634834.jpg',
+    imageUrl: wallpaperBotanicalStoneUrl,
     fallbackGradient: 'linear-gradient(165deg, #d7cfc2 0%, #b7ab98 60%, #4b4742 100%)',
     surfaceTone: 'light',
   },
   {
     id: 'architectural-glass',
     name: 'Fluted Glass',
-    imageUrl: '/src/assets/images/wallpaper_architectural_glass_1795273636000.jpg',
+    imageUrl: wallpaperArchitecturalGlassUrl,
     fallbackGradient: 'linear-gradient(160deg, #d2d9db 0%, #aeb9bd 50%, #7d878c 100%)',
     surfaceTone: 'light',
   },
@@ -173,8 +176,12 @@ export const WIDGET_TEMPLATES: WidgetTemplate[] = [
   },
 ];
 
+const APP_CATALOG_BY_PACKAGE = new Map<string, AppCatalogEntry>(
+  ANDROID_APP_CATALOG.map((entry) => [entry.packageName, entry])
+);
+
 function catalogApp(pkg: string) {
-  const found = ANDROID_APP_CATALOG.find((a) => a.packageName === pkg);
+  const found = APP_CATALOG_BY_PACKAGE.get(pkg);
   if (!found) {
     throw new Error(`Missing catalog entry for ${pkg}`);
   }
@@ -747,6 +754,165 @@ export function createInitialDevices(): DeviceProfile[] {
     ],
   };
 
+  // Dedicated Cricket Icon 5 (SL112C) profile — Android 13, Quickstep 4x5 grid
+  const cricketIcon5: DeviceProfile = {
+    id: 'dev-cricket-icon-5',
+    name: 'Cricket Icon 5',
+    modelCode: 'SL112C',
+    manufacturer: 'Cricket',
+    androidVersion: 'Android 13',
+    launcher: 'Quickstep Launcher (AOSP)',
+    formFactor: 'phone',
+    gridCols: 4,
+    gridRows: 5,
+    gridDetectionSource: 'oem-profile',
+    gridConfidence: 'verified',
+    gridDetectedAt: '2026-11-22T08:30:00.000Z',
+    wallpaperId: 'botanical-stone',
+    lastScannedAt: '2026-11-22T08:30:00.000Z',
+    installedPackages: [
+      'com.google.android.dialer',
+      'com.google.android.apps.messaging',
+      'com.android.chrome',
+      'com.google.android.GoogleCamera',
+      'com.google.android.gm',
+      'com.google.android.calendar',
+      'com.google.android.apps.maps',
+      'com.google.android.apps.photos',
+      'com.google.android.youtube',
+      'com.google.android.apps.docs',
+      'com.android.settings',
+      'com.google.android.deskclock',
+      'com.google.android.calculator',
+      'com.google.android.apps.nbu.files',
+      'com.google.android.keep',
+      'com.whatsapp',
+      'com.spotify.music',
+    ],
+    dock: [
+      { id: 'dk-ic5-1', ...catalogApp('com.google.android.dialer') },
+      { id: 'dk-ic5-2', ...catalogApp('com.google.android.apps.messaging') },
+      { id: 'dk-ic5-3', ...catalogApp('com.android.chrome') },
+      { id: 'dk-ic5-4', ...catalogApp('com.google.android.GoogleCamera') },
+    ],
+    screens: [
+      {
+        id: 'scr-icon5-home',
+        name: 'Home Screen',
+        isPrimary: true,
+        order: 0,
+        widgets: [
+          {
+            id: 'w-icon5-weather',
+            syncKey: 'widget.weather.at-a-glance',
+            provider: 'com.google.android.apps.weather/.WidgetProvider',
+            title: 'Weather & Conditions',
+            kind: 'weather',
+            col: 0,
+            row: 0,
+            spanX: 4,
+            spanY: 1,
+            syncEnabled: true,
+            updatedAt: now,
+            updatedByDeviceId: 'dev-pixel-9-pro',
+            config: {
+              city: 'San Francisco',
+              unit: 'F',
+              tempF: 61,
+              condition: 'Partly Cloudy',
+            },
+          },
+          {
+            id: 'w-icon5-clock',
+            syncKey: 'widget.clock.dual-zone',
+            provider: 'com.google.android.deskclock/.DualClockWidgetProvider',
+            title: 'World Clock',
+            kind: 'clock',
+            col: 0,
+            row: 1,
+            spanX: 2,
+            spanY: 1,
+            syncEnabled: true,
+            updatedAt: '2026-11-22T08:30:00.000Z',
+            updatedByDeviceId: 'dev-cricket-icon-5',
+            config: {
+              primaryZone: 'PST · San Francisco',
+              secondaryZone: 'UTC · London',
+              use24Hour: false,
+            },
+          },
+        ],
+        icons: [
+          { id: 'ic-ic5-1', ...catalogApp('com.google.android.gm'), col: 0, row: 3 },
+          { id: 'ic-ic5-2', ...catalogApp('com.google.android.apps.maps'), col: 1, row: 3 },
+          { id: 'ic-ic5-3', ...catalogApp('com.google.android.apps.photos'), col: 2, row: 3 },
+          { id: 'ic-ic5-4', ...catalogApp('com.google.android.youtube'), col: 3, row: 3 },
+          { id: 'ic-ic5-5', ...catalogApp('com.whatsapp'), col: 0, row: 4 },
+          { id: 'ic-ic5-6', ...catalogApp('com.spotify.music'), col: 1, row: 4 },
+        ],
+        folders: [
+          {
+            id: 'fld-icon5-work',
+            name: 'Work Suite',
+            col: 2,
+            row: 4,
+            tint: '#334155',
+            apps: [
+              { id: 'fa-ic5-1', ...catalogApp('com.google.android.apps.docs') },
+              { id: 'fa-ic5-2', ...catalogApp('com.google.android.calendar') },
+            ],
+          },
+          {
+            id: 'fld-icon5-tools',
+            name: 'Essentials',
+            col: 3,
+            row: 4,
+            tint: '#0F766E',
+            apps: [
+              { id: 'fa-ic5-3', ...catalogApp('com.google.android.apps.nbu.files') },
+              { id: 'fa-ic5-4', ...catalogApp('com.google.android.keep') },
+              { id: 'fa-ic5-5', ...catalogApp('com.google.android.calculator') },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'scr-icon5-supp-1',
+        name: 'Media & Tools',
+        isPrimary: false,
+        order: 1,
+        widgets: [
+          {
+            id: 'w-icon5-music',
+            syncKey: 'widget.music.now-playing',
+            provider: 'com.spotify.music/.widget.NowPlayingWidgetProvider',
+            title: 'Spotify Player',
+            kind: 'music',
+            col: 0,
+            row: 0,
+            spanX: 4,
+            spanY: 1,
+            syncEnabled: true,
+            updatedAt: '2026-11-22T08:30:00.000Z',
+            updatedByDeviceId: 'dev-cricket-icon-5',
+            config: {
+              trackTitle: 'Kiasmos — Blurred',
+              artist: 'Focus Mix · 44kHz',
+              isPlaying: false,
+            },
+          },
+        ],
+        icons: [
+          { id: 'ic-ic5-7', ...catalogApp('com.android.settings'), col: 0, row: 1 },
+          { id: 'ic-ic5-8', ...catalogApp('com.google.android.deskclock'), col: 1, row: 1 },
+          { id: 'ic-ic5-9', ...catalogApp('com.google.android.calculator'), col: 2, row: 1 },
+          { id: 'ic-ic5-10', ...catalogApp('com.google.android.keep'), col: 3, row: 1 },
+        ],
+        folders: [],
+      },
+    ],
+  };
+
   const galaxyS24: DeviceProfile = {
     id: 'dev-galaxy-s24',
     name: 'Galaxy S24 Ultra',
@@ -1045,15 +1211,16 @@ export function createInitialDevices(): DeviceProfile[] {
     ],
   };
 
-  return [pixel9, galaxyA15, galaxyA16, galaxyS24, tabS9];
+  return [pixel9, galaxyA15, galaxyA16, cricketIcon5, galaxyS24, tabS9];
 }
 
 export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnapshot[] {
   const pixel = devices.find((d) => d.id === 'dev-pixel-9-pro') ?? devices[0];
   const galaxyA15 = devices.find((d) => d.id === 'dev-galaxy-a15') ?? devices[1];
   const galaxyA16 = devices.find((d) => d.id === 'dev-galaxy-a16') ?? devices[2];
-  const galaxyS = devices.find((d) => d.id === 'dev-galaxy-s24') ?? devices[3];
-  const tabS9 = devices.find((d) => d.id === 'dev-tab-s9') ?? devices[4];
+  const cricketIcon5 = devices.find((d) => d.id === 'dev-cricket-icon-5') ?? devices[3];
+  const galaxyS = devices.find((d) => d.id === 'dev-galaxy-s24') ?? devices[4];
+  const tabS9 = devices.find((d) => d.id === 'dev-tab-s9') ?? devices[5];
 
   const pixelBackup = buildBackupSnapshot(pixel, {
     id: 'bk-pixel-baseline-2026',
@@ -1061,6 +1228,7 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
     notes: 'Full 3-screen capture including Work Suite, Messaging, Finance, Transit folders and 4 synced widgets.',
     storage: 'cloud',
     createdAt: '2026-11-21T06:45:00.000Z',
+    includeIconArt: true,
   });
 
   const galaxyA15Backup = buildBackupSnapshot(galaxyA15, {
@@ -1069,6 +1237,7 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
     notes: 'Samsung Galaxy A15 (SM-A156U) 4×6 layout with Samsung Internet, Notes, My Files, Work Suite folder, and synced Weather/Clock widgets.',
     storage: 'cloud',
     createdAt: '2026-11-21T06:56:00.000Z',
+    includeIconArt: true,
   });
 
   const galaxyA16Backup = buildBackupSnapshot(galaxyA16, {
@@ -1077,6 +1246,16 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
     notes: 'Samsung Galaxy A16 (SM-A166U) 4×6 layout with Wallet, Samsung folder, Work Suite, and synced Weather, Spotify, and World Clock widgets.',
     storage: 'cloud',
     createdAt: '2026-11-21T07:01:00.000Z',
+    includeIconArt: true,
+  });
+
+  const cricketIcon5Backup = buildBackupSnapshot(cricketIcon5, {
+    id: 'bk-cricket-icon-5-android13',
+    name: 'Cricket Icon 5 — Android 13 Setup',
+    notes: 'Cricket Icon 5 (SL112C) 4×5 Android 13 lightweight layout-only snapshot (no bundled icon art) with Quickstep Launcher, Work Suite & Essentials folders, and synced widgets.',
+    storage: 'cloud',
+    createdAt: '2026-11-22T08:30:00.000Z',
+    includeIconArt: false,
   });
 
   const galaxySBackup = buildBackupSnapshot(galaxyS, {
@@ -1085,6 +1264,7 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
     notes: 'High-density One UI 7 layout with Lightroom, Keep Notes, Dual World Clock, and Work Suite folder.',
     storage: 'cloud',
     createdAt: '2026-11-20T21:20:00.000Z',
+    includeIconArt: true,
   });
 
   const novaSixBySixBackup = buildBackupSnapshot(tabS9, {
@@ -1093,6 +1273,7 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
     notes: 'Dense 6×6 grid reported via Nova Launcher provider (6×2 Agenda widget, 4×1 Spotify, 2×1 Clock, 12 icons + Reading folder) — ideal for testing 6×6 → 5×4 / 4×5 cross-grid adaptation.',
     storage: 'cloud',
     createdAt: '2026-11-21T07:10:00.000Z',
+    includeIconArt: true,
   });
 
   return [
@@ -1100,6 +1281,7 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
     novaSixBySixBackup,
     galaxyA15Backup,
     galaxyA16Backup,
+    cricketIcon5Backup,
     galaxySBackup,
   ];
 }

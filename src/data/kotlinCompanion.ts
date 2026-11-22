@@ -17,6 +17,15 @@ export const ANDROID_COMPANION_FILES: CompanionSourceFile[] = [
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class IconArtEntry(
+    val packageName: String,
+    val label: String,
+    val iconKey: String,
+    val tint: String,
+    val dataUri: String
+)
+
+@Serializable
 data class LayoutBackupSnapshot(
     val id: String,
     val name: String,
@@ -29,6 +38,8 @@ data class LayoutBackupSnapshot(
     val gridCols: Int,
     val gridRows: Int,
     val gridDetectionSource: String = "auto-accessibility",
+    val includesIconArt: Boolean = false,
+    val iconArtAssets: Map<String, IconArtEntry>? = null,
     val screens: List<HomeScreenPage>,
     val dock: List<AppIconItem>,
     val checksum: String
@@ -52,7 +63,8 @@ data class AppIconItem(
     val label: String,
     val col: Int = 0,
     val row: Int = 0,
-    val isPlaceholder: Boolean = false
+    val isPlaceholder: Boolean = false,
+    val customIconArt: String? = null
 )
 
 @Serializable
@@ -487,6 +499,12 @@ on:
     paths:
       - 'android/**'
   workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Build release APK (uses signing secrets if configured)'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   build-apk:

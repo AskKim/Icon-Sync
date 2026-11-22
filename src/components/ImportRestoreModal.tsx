@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   Cloud,
   GitMerge,
   Grid2x2Check,
+  Image as ImageIcon,
   Layers,
   PackageSearch,
   Upload,
@@ -23,8 +24,10 @@ import {
 } from '../types/layout';
 import {
   analyzeGridCompatibility,
+  backupIncludesIconArt,
   computeRestoreResult,
   formatGridSourceLabel,
+  getBackupIconArtCount,
   repairBackupPayload,
   validateBackupPayload,
 } from '../engine/layoutEngine';
@@ -115,7 +118,13 @@ export function ImportRestoreModal({
     overflowToNewScreen: true,
     missingAppStrategy: 'guided',
     gridStrategy: 'auto-reflow',
+    importIconArt: true,
   });
+
+  const [strategyOverride, setStrategyOverride] = useState<{
+    pairKey: string;
+    strategy: GridAdaptationStrategy;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -127,31 +136,50 @@ export function ImportRestoreModal({
   const effectiveSelectedBackupId = activeBackup?.id ?? selectedBackupId;
   const targetDevice = devices.find((d) => d.id === targetDeviceId) ?? devices[0];
 
+  const backupHasIconArt = useMemo(
+    () => backupIncludesIconArt(activeBackup),
+    [activeBackup]
+  );
+  const backupIconArtCount = useMemo(
+    () => getBackupIconArtCount(activeBackup),
+    [activeBackup]
+  );
+  const effectiveImportIconArt = backupHasIconArt && (mergeOptions.importIconArt ?? true);
+
   const gridAnalysis = useMemo(() => {
     if (!activeBackup || !targetDevice) return null;
     return analyzeGridCompatibility(targetDevice, activeBackup);
   }, [activeBackup, targetDevice]);
 
-  // Auto-select recommended grid strategy whenever source/target pair changes
-  useEffect(() => {
-    if (!gridAnalysis) return;
-    setMergeOptions((prev) => ({
-      ...prev,
-      gridStrategy: gridAnalysis.isExactMatch ? 'auto-reflow' : gridAnalysis.recommendedStrategy,
-    }));
-  }, [
-    activeBackup?.id,
-    targetDevice?.id,
-    targetDevice?.gridCols,
-    targetDevice?.gridRows,
-    gridAnalysis?.isExactMatch,
-    gridAnalysis?.recommendedStrategy,
-  ]);
+  const pairKey =
+    activeBackup && targetDevice
+      ? `${activeBackup.id}:${targetDevice.id}:${targetDevice.gridCols}x${targetDevice.gridRows}`
+      : '';
+  const recommendedStrategy: GridAdaptationStrategy = gridAnalysis
+    ? gridAnalysis.isExactMatch
+      ? 'auto-reflow'
+      : gridAnalysis.recommendedStrategy
+    : 'auto-reflow';
+  const effectiveGridStrategy: GridAdaptationStrategy =
+    strategyOverride && strategyOverride.pairKey === pairKey
+      ? strategyOverride.strategy
+      : recommendedStrategy;
 
   const preview = useMemo(() => {
     if (!activeBackup || !targetDevice) return null;
-    return computeRestoreResult(targetDevice, activeBackup, mode, mergeOptions);
-  }, [activeBackup, targetDevice, mode, mergeOptions]);
+    return computeRestoreResult(targetDevice, activeBackup, mode, {
+      ...mergeOptions,
+      gridStrategy: effectiveGridStrategy,
+      importIconArt: effectiveImportIconArt,
+    });
+  }, [
+    activeBackup,
+    targetDevice,
+    mode,
+    mergeOptions,
+    effectiveGridStrategy,
+    effectiveImportIconArt,
+  ]);
 
   const handleFileSelected = async (file: File | undefined) => {
     if (!file) return;
@@ -499,7 +527,7 @@ export function ImportRestoreModal({
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {GRID_STRATEGIES.map((st) => {
-                    const active = (mergeOptions.gridStrategy ?? 'auto-reflow') === st.id;
+                    const active = effectiveGridStrategy === st.id;
                     const disabled =
                       st.id === 'resize-target-grid' && !gridAnalysis.canResizeTargetLauncher;
                     const isRecommended = gridAnalysis.recommendedStrategy === st.id;
@@ -509,7 +537,7 @@ export function ImportRestoreModal({
                         type="button"
                         disabled={disabled}
                         onClick={() =>
-                          setMergeOptions((prev) => ({ ...prev, gridStrategy: st.id }))
+                          setStrategyOverride({ pairKey, strategy: st.id })
                         }
                         className={`p-3 rounded-lg border text-left transition-colors ${
                           disabled
@@ -667,6 +695,57 @@ export function ImportRestoreModal({
                 </label>
               </div>
             )}
+          </div>
+
+          {/* Icon Art Import Option (applies to Replace & Merge when backup includes icon art) */}
+          <div className="p-4 rounded-xl bg-[#F9FAFB] border border-[#E4E7EC] space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-[#111827]">Icon Art &amp; Assets</p>
+              {activeBackup && (
+                <span
+                  className={`text-[11px] font-mono tabular-nums ${
+                    backupHasIconArt ? 'text-[#166534]' : 'text-[#6B7280]'
+                  }`}
+                >
+                  {backupHasIconArt
+                    ? `${backupIconArtCount} app icon${backupIconArtCount === 1 ? '' : 's'} bundled`
+                    : 'Not included in backup'}
+                </span>
+              )}
+            </div>
+            <label
+              className={`flex items-start gap-2.5 select-none ${
+                backupHasIconArt ? 'cursor-pointer' : 'cursor-not-allowed opacity-65'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={effectiveImportIconArt}
+                disabled={!backupHasIconArt}
+                onChange={(e) =>
+                  setMergeOptions((prev) => ({
+                    ...prev,
+                    importIconArt: e.target.checked,
+                  }))
+                }
+                className="mt-0.5 w-4 h-4 rounded border-[#CBD5E1] accent-[#166534] shrink-0 disabled:cursor-not-allowed"
+              />
+              <div className="min-w-0">
+                <span className="text-xs font-medium text-[#111827] flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-[#166534]" />
+                  Import icon art from backup
+                </span>
+                <p className="text-[11px] text-[#6B7280] mt-0.5 leading-snug">
+                  {!activeBackup
+                    ? 'Select or upload a backup snapshot to inspect bundled icon artwork.'
+                    : backupHasIconArt
+                    ? effectiveImportIconArt
+                      ? `Restores bundled icon artwork for ${backupIconArtCount} unique app${backupIconArtCount === 1 ? '' : 's'}. Uncheck to keep ${targetDevice.name}'s local icon styles.`
+                      : `Bundled icon art will be skipped — ${targetDevice.name}'s local app icons will be preserved.`
+                    : `This backup was saved without icon art (layout coordinates only). ${targetDevice.name}'s local app icons will be used.`}
+                </p>
+              </div>
+            </label>
           </div>
 
           {/* Merge fine-tuning controls */}

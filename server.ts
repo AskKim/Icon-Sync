@@ -30,7 +30,8 @@
  *   - Catches invalid JSON payloads cleanly without leaking server stack traces.
  */
 
-import express, { NextFunction, Request, Response } from 'express';
+import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -124,23 +125,44 @@ function ensureDataDir(): void {
   }
 }
 
+let cachedVault: VaultStore | null = null;
+let cachedVaultMtimeMs: number | null = null;
+let cachedVaultSizeBytes = 0;
+
 /**
- * Reads the persisted vault JSON from disk.
+ * Reads the persisted vault JSON from disk, using an in-memory cache validated
+ * against the file's `mtimeMs` and `size` so hot API reads skip redundant I/O,
+ * JSON parsing, and deep object sanitization.
  * If the user is upgrading from the legacy vault filename, automatically migrates
  * the file to `.data/icon-sync-vault.json`.
  */
 function readVault(): VaultStore | null {
   try {
     if (fs.existsSync(VAULT_FILE)) {
+      const stat = fs.statSync(VAULT_FILE);
+      if (
+        cachedVault !== null &&
+        cachedVaultMtimeMs === stat.mtimeMs &&
+        cachedVaultSizeBytes === stat.size
+      ) {
+        return cachedVault;
+      }
       const raw = fs.readFileSync(VAULT_FILE, 'utf-8');
-      return sanitizeJsonValue(JSON.parse(raw) as VaultStore);
+      const parsed = sanitizeJsonValue(JSON.parse(raw) as VaultStore);
+      cachedVault = parsed;
+      cachedVaultMtimeMs = stat.mtimeMs;
+      cachedVaultSizeBytes = stat.size;
+      return parsed;
     }
     if (fs.existsSync(LEGACY_VAULT_FILE)) {
       const raw = fs.readFileSync(LEGACY_VAULT_FILE, 'utf-8');
       const parsed = sanitizeJsonValue(JSON.parse(raw) as VaultStore);
       writeVaultAtomic(parsed);
-      return parsed;
+      return cachedVault ?? parsed;
     }
+    cachedVault = null;
+    cachedVaultMtimeMs = null;
+    cachedVaultSizeBytes = 0;
     return null;
   } catch (err) {
     console.error('Failed to read vault file:', err);
@@ -155,16 +177,21 @@ function readVault(): VaultStore | null {
  */
 function writeVaultAtomic(store: VaultStore): void {
   ensureDataDir();
-  const payload = {
+  const payload: VaultStore = {
     ...store,
     updatedAt: new Date().toISOString(),
   };
+  const serialized = JSON.stringify(payload, null, 2);
   const tmpFile = resolveConfinedDataPath(`icon-sync-vault.${process.pid}.${Date.now()}.tmp`);
-  fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), {
+  fs.writeFileSync(tmpFile, serialized, {
     encoding: 'utf-8',
     mode: 0o600,
   });
   fs.renameSync(tmpFile, VAULT_FILE);
+  const stat = fs.statSync(VAULT_FILE);
+  cachedVault = payload;
+  cachedVaultMtimeMs = stat.mtimeMs;
+  cachedVaultSizeBytes = stat.size;
 }
 
 /**
@@ -253,8 +280,12 @@ async function startServer() {
       try {
         const stat = fs.statSync(VAULT_FILE);
         sizeBytes = stat.size;
-        const vault = readVault();
-        updatedAt = vault?.updatedAt ?? stat.mtime.toISOString();
+        updatedAt =
+          cachedVault !== null &&
+          cachedVaultMtimeMs === stat.mtimeMs &&
+          cachedVaultSizeBytes === stat.size
+            ? cachedVault.updatedAt
+            : stat.mtime.toISOString();
       } catch {
         sizeBytes = 0;
       }
@@ -420,8 +451,25 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
+    app.use(
+      '/assets',
+      express.static(path.join(distPath, 'assets'), {
+        maxAge: '1y',
+        immutable: true,
+      })
+    );
+    app.use(
+      express.static(distPath, {
+        maxAge: '1h',
+        setHeaders(res, filePath) {
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

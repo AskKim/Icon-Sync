@@ -26,6 +26,15 @@ export interface AppIconItem {
   row: number;
   isPlaceholder?: boolean;
   playStoreUrl?: string;
+  customIconArt?: string;
+}
+
+export interface IconArtEntry {
+  packageName: string;
+  label: string;
+  iconKey: string;
+  tint: string;
+  dataUri: string;
 }
 
 export interface FolderItem {
@@ -186,6 +195,7 @@ export interface BackupStats {
   widgetCount: number;
   syncedWidgetCount: number;
   dockCount: number;
+  iconArtCount?: number;
   bytes: number;
 }
 
@@ -203,6 +213,8 @@ export interface LayoutBackupSnapshot {
   gridRows: number;
   gridDetectionSource?: GridDetectionSource;
   wallpaperId: string;
+  includesIconArt?: boolean;
+  iconArtAssets?: Record<string, IconArtEntry>;
   screens: HomeScreenPage[];
   dock: Omit<AppIconItem, 'col' | 'row'>[];
   stats: BackupStats;
@@ -231,6 +243,7 @@ export interface MergeOptions {
   overflowToNewScreen: boolean;
   missingAppStrategy: MissingAppStrategy;
   gridStrategy?: GridAdaptationStrategy;
+  importIconArt?: boolean;
 }
 
 export interface RestoreDiffReport {
@@ -259,6 +272,8 @@ export interface RestoreDiffReport {
   outOfBoundsRelocated: number;
   itemsDroppedByCrop: number;
   overflowScreensCreated: number;
+  iconArtImported: number;
+  iconArtSkipped: boolean;
   notes: string[];
 }
 
