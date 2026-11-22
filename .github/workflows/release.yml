@@ -54,7 +54,7 @@ jobs:
           tar -czf "release-assets/IconSync-web-${{ steps.tag.outputs.name }}.tar.gz" "${TAR_FILES[@]}"
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
