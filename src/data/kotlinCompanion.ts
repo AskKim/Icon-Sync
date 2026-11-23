@@ -14,23 +14,42 @@ export const ANDROID_COMPANION_FILES: CompanionSourceFile[] = [
     summary: 'Serializable data classes matching the Icon Sync v2.0 JSON backup format for icons, folders, grid detection metadata, and synced widgets.',
     content: `package com.iconsync.android.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
 enum class GridDetectionSource {
+    @SerialName("launcher-provider")
     LAUNCHER_PROVIDER,
+
+    @SerialName("auto-accessibility")
     AUTO_ACCESSIBILITY,
+
+    @SerialName("user-reported")
     USER_REPORTED,
+
+    @SerialName("backup-metadata")
     BACKUP_METADATA,
+
+    @SerialName("oem-profile")
     FALLBACK_HEURISTIC
 }
 
 @Serializable
 enum class GridAdaptationStrategy {
+    @SerialName("auto-reflow")
     AUTO_REFLOW,
+
+    @SerialName("proportional-scale")
     PROPORTIONAL_SCALE,
+
+    @SerialName("preserve-pages")
     PRESERVE_PAGES,
+
+    @SerialName("resize-target-grid")
     RESIZE_TARGET_GRID,
+
+    @SerialName("crop-within-bounds")
     CROP_WITHIN_BOUNDS
 }
 
@@ -42,7 +61,10 @@ data class IconPlacement(
     val col: Int,
     val row: Int,
     val isPlaceholder: Boolean = false,
-    val customIconArt: String? = null
+    val customIconArt: String? = null,
+    val iconKey: String = "smartphone",
+    val tint: String = "#166534",
+    val category: String = "Utilities"
 )
 
 @Serializable
@@ -51,6 +73,7 @@ data class FolderPlacement(
     val name: String,
     val col: Int,
     val row: Int,
+    val tint: String = "#334155",
     val apps: List<IconPlacement> = emptyList()
 )
 
@@ -92,16 +115,21 @@ data class IconArtEntry(
 data class LayoutBackupSnapshot(
     val id: String,
     val name: String,
+    val notes: String = "",
     val schemaVersion: String = "2.0",
     val createdAt: String,
+    val storage: String = "local",
+    val sourceDeviceId: String = "android-companion",
     val sourceDeviceName: String,
     val sourceLauncher: String,
     val gridCols: Int,
     val gridRows: Int,
     val gridDetectionSource: GridDetectionSource = GridDetectionSource.AUTO_ACCESSIBILITY,
+    val wallpaperId: String = "alpine-dusk",
     val includesIconArt: Boolean = false,
     val iconArtAssets: Map<String, IconArtEntry>? = null,
     val screens: List<HomeScreenPage>,
+    val dock: List<IconPlacement> = emptyList(),
     val checksum: String = ""
 )
 
@@ -135,19 +163,29 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 @Serializable
+data class CapturedShortcut(
+    val label: String,
+    val col: Int,
+    val row: Int
+)
+
+@Serializable
 data class StoredGridConfig(
     val userCols: Int? = null,
     val userRows: Int? = null,
     val accCols: Int? = null,
-    val accRows: Int? = null
+    val accRows: Int? = null,
+    val preferUserGrid: Boolean = false,
+    val capturedShortcuts: List<CapturedShortcut> = emptyList(),
+    val lastCapturedAtMs: Long = 0L
 )
 
 /**
  * Resolves the active Android launcher's home-screen grid dimensions (cols x rows).
  *
- * Tier 1: Query known launcher ContentProviders (Nova, Lawnchair, Pixel/Launcher3) when permitted.
+ * Tier 1: Query known launcher ContentProviders (Nova, Lawnchair) when permitted.
  * Tier 2: Read latest cached bounds from opt-in LauncherGridAccessibilityService.
- * Tier 3: Fall back to user-reported custom grid stored in SharedPreferences (ideal for Mini/Minimalist launchers).
+ * Tier 3: Fall back to user-reported custom grid stored in SharedPreferences.
  */
 class LauncherGridDetector(private val context: Context) {
 
@@ -178,6 +216,19 @@ class LauncherGridDetector(private val context: Context) {
         val launcherPkg = detectActiveLauncherPackage()
         val storedConfig = loadStoredConfig()
 
+        val userCols = storedConfig.userCols
+        val userRows = storedConfig.userRows
+        if (storedConfig.preferUserGrid && userCols != null && userRows != null && userCols in 3..8 && userRows in 3..8) {
+            return DetectedLauncherGrid(
+                launcherPackage = launcherPkg,
+                cols = userCols,
+                rows = userRows,
+                source = GridDetectionSource.USER_REPORTED,
+                confidence = "manual",
+                message = "Using calibrated \${userCols}x$userRows grid."
+            )
+        }
+
         // Tier 1: Query launcher provider if exposed (e.g., Nova / Lawnchair)
         queryLauncherProvider(launcherPkg)?.let { (cols, rows) ->
             return DetectedLauncherGrid(
@@ -204,9 +255,7 @@ class LauncherGridDetector(private val context: Context) {
             )
         }
 
-        // Tier 3: User-reported custom grid (required for private Mini/Minimalist launchers)
-        val userCols = storedConfig.userCols
-        val userRows = storedConfig.userRows
+        // Tier 3: User-reported custom grid
         if (userCols != null && userRows != null && userCols in 3..8 && userRows in 3..8) {
             return DetectedLauncherGrid(
                 launcherPackage = launcherPkg,
@@ -218,14 +267,14 @@ class LauncherGridDetector(private val context: Context) {
             )
         }
 
-        // Safe default heuristic when launcher blocks introspection and user hasn't reported yet
+        // Safe OEM default heuristic
         return DetectedLauncherGrid(
             launcherPackage = launcherPkg,
             cols = 4,
             rows = 5,
             source = GridDetectionSource.FALLBACK_HEURISTIC,
             confidence = "estimated",
-            message = "$launcherPkg did not expose grid dimensions. Report your grid manually in Icon Sync."
+            message = "$launcherPkg did not expose grid dimensions. Enable Accessibility or calibrate below."
         )
     }
 
@@ -234,9 +283,15 @@ class LauncherGridDetector(private val context: Context) {
         saveStoredConfig(
             current.copy(
                 userCols = cols.coerceIn(3, 8),
-                userRows = rows.coerceIn(3, 8)
+                userRows = rows.coerceIn(3, 8),
+                preferUserGrid = true
             )
         )
+    }
+
+    fun resetToAutoDetect() {
+        val current = loadStoredConfig()
+        saveStoredConfig(current.copy(preferUserGrid = false))
     }
 
     fun saveAccessibilityDetectedGrid(cols: Int, rows: Int) {
@@ -244,7 +299,8 @@ class LauncherGridDetector(private val context: Context) {
         saveStoredConfig(
             current.copy(
                 accCols = cols.coerceIn(3, 8),
-                accRows = rows.coerceIn(3, 8)
+                accRows = rows.coerceIn(3, 8),
+                lastCapturedAtMs = System.currentTimeMillis()
             )
         )
     }
@@ -816,6 +872,17 @@ class WidgetSyncWorker(
                 android:name="android.accessibilityservice"
                 android:resource="@xml/launcher_accessibility_config" />
         </service>
+
+        <!-- FileProvider for sharing exported v2.0 JSON backup snapshots -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="\${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>`,
   },

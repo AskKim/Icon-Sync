@@ -3,9 +3,13 @@ package com.iconsync.android
 
 import com.iconsync.android.grid.GridRemapper
 import com.iconsync.android.model.GridAdaptationStrategy
+import com.iconsync.android.model.GridDetectionSource
 import com.iconsync.android.model.HomeScreenPage
 import com.iconsync.android.model.IconPlacement
+import com.iconsync.android.model.LayoutBackupSnapshot
 import com.iconsync.android.model.WidgetPlacement
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -170,5 +174,31 @@ class GridRemapperTest {
         assertEquals(0, result.droppedByCrop)
         assertTrue("Expected sibling continuation page", result.overflowPagesAdded >= 1)
         assertTrue(result.screens.any { it.name.contains("(Cont.)") })
+    }
+
+    @Test
+    fun backupSnapshotSerializesWebStudioCompatibleFields() {
+        val json = Json {
+            encodeDefaults = true
+            ignoreUnknownKeys = true
+        }
+        val snapshot = LayoutBackupSnapshot(
+            id = "bk-test",
+            name = "Galaxy A15 Test",
+            createdAt = "2026-11-23T07:17:48Z",
+            sourceDeviceName = "samsung SM-A156U",
+            sourceLauncher = "com.sec.android.app.launcher",
+            gridCols = 4,
+            gridRows = 5,
+            gridDetectionSource = GridDetectionSource.AUTO_ACCESSIBILITY,
+            screens = listOf(buildDenseSixBySixPage())
+        )
+        val encoded = json.encodeToString(snapshot)
+        assertTrue(encoded.contains("\"auto-accessibility\""))
+        assertTrue(encoded.contains("\"schemaVersion\":\"2.0\""))
+
+        val decoded = json.decodeFromString<LayoutBackupSnapshot>(encoded)
+        assertEquals(GridDetectionSource.AUTO_ACCESSIBILITY, decoded.gridDetectionSource)
+        assertEquals(24, decoded.screens.first().icons.size)
     }
 }
