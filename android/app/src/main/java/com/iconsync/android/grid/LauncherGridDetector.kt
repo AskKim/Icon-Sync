@@ -8,6 +8,7 @@ import android.os.Build
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.iconsync.android.model.DetectedLauncherGrid
+import com.iconsync.android.model.FolderPlacement
 import com.iconsync.android.model.GridDetectionSource
 import com.iconsync.android.model.IconPlacement
 import kotlinx.serialization.Serializable
@@ -19,7 +20,8 @@ import java.util.Locale
 data class CapturedShortcut(
     val label: String,
     val col: Int,
-    val row: Int
+    val row: Int,
+    val isFolder: Boolean = false
 )
 
 @Serializable
@@ -30,6 +32,7 @@ data class StoredGridConfig(
     val accRows: Int? = null,
     val preferUserGrid: Boolean = false,
     val capturedShortcuts: List<CapturedShortcut> = emptyList(),
+    val capturedDock: List<CapturedShortcut> = emptyList(),
     val lastCapturedAtMs: Long = 0L
 )
 
@@ -122,7 +125,12 @@ class LauncherGridDetector(private val context: Context) {
         val accRows = storedConfig.accRows
         if (accCols != null && accRows != null && accCols in 3..8 && accRows in 3..8) {
             val capturedCount = storedConfig.capturedShortcuts.size
-            val captureNote = if (capturedCount > 0) " ($capturedCount home icons captured)" else ""
+            val dockCount = storedConfig.capturedDock.size
+            val captureNote = when {
+                capturedCount > 0 && dockCount > 0 -> " ($capturedCount home + $dockCount dock icons captured)"
+                capturedCount > 0 -> " ($capturedCount home icons captured)"
+                else -> ""
+            }
             return DetectedLauncherGrid(
                 launcherPackage = launcherPkg,
                 cols = accCols,
@@ -174,23 +182,38 @@ class LauncherGridDetector(private val context: Context) {
     }
 
     fun saveAccessibilityDetectedGrid(cols: Int, rows: Int) {
-        saveAccessibilityCapture(cols, rows, loadStoredConfig().capturedShortcuts)
+        val current = loadStoredConfig()
+        saveAccessibilityCapture(cols, rows, current.capturedShortcuts, current.capturedDock)
     }
 
-    fun saveAccessibilityCapture(cols: Int, rows: Int, shortcuts: List<CapturedShortcut>) {
+    fun saveAccessibilityCapture(
+        cols: Int?,
+        rows: Int?,
+        shortcuts: List<CapturedShortcut>,
+        dock: List<CapturedShortcut> = emptyList()
+    ) {
         val current = loadStoredConfig()
-        val boundedCols = cols.coerceIn(3, 8)
-        val boundedRows = rows.coerceIn(3, 8)
+        val boundedCols = cols?.coerceIn(3, 8) ?: current.accCols
+        val boundedRows = rows?.coerceIn(3, 8) ?: current.accRows
+        val effectiveCols = boundedCols ?: current.userCols ?: 5
+        val effectiveRows = boundedRows ?: current.userRows ?: 6
+
         val sanitizedShortcuts = shortcuts
-            .filter { it.label.isNotBlank() && it.col in 0 until boundedCols && it.row in 0 until boundedRows }
+            .filter { it.label.isNotBlank() && it.col in 0 until effectiveCols && it.row in 0 until effectiveRows }
             .distinctBy { Pair(it.col, it.row) }
-            .take(boundedCols * boundedRows)
+            .take(effectiveCols * effectiveRows)
+
+        val sanitizedDock = dock
+            .filter { it.label.isNotBlank() }
+            .take(8)
+            .mapIndexed { idx, item -> item.copy(col = idx, row = 0) }
 
         saveStoredConfig(
             current.copy(
                 accCols = boundedCols,
                 accRows = boundedRows,
                 capturedShortcuts = sanitizedShortcuts,
+                capturedDock = sanitizedDock,
                 lastCapturedAtMs = System.currentTimeMillis()
             )
         )
@@ -198,8 +221,14 @@ class LauncherGridDetector(private val context: Context) {
 
     fun getCapturedShortcutCount(): Int = loadStoredConfig().capturedShortcuts.size
 
+    fun getCapturedDockCount(): Int = loadStoredConfig().capturedDock.size
+
+    fun getCapturedShortcutsRaw(): List<CapturedShortcut> = loadStoredConfig().capturedShortcuts
+
+    fun getCapturedDockRaw(): List<CapturedShortcut> = loadStoredConfig().capturedDock
+
     fun getCapturedIcons(cols: Int, rows: Int): List<IconPlacement> {
-        val shortcuts = loadStoredConfig().capturedShortcuts
+        val shortcuts = loadStoredConfig().capturedShortcuts.filterNot { it.isFolder }
         if (shortcuts.isEmpty()) return emptyList()
 
         val launchableApps = getInstalledLaunchableApps()
@@ -215,11 +244,7 @@ class LauncherGridDetector(private val context: Context) {
             if (!seenSlots.add(Pair(col, row))) return@forEachIndexed
 
             val cleanLabel = shortcut.label.trim()
-            val matchedApp = byLowerLabel[cleanLower(cleanLabel)]
-                ?: launchableApps.firstOrNull {
-                    it.label.equals(cleanLabel, ignoreCase = true) ||
-                        cleanLabel.contains(it.label, ignoreCase = true)
-                }
+            val matchedApp = matchLaunchableApp(cleanLabel, launchableApps, byLowerLabel)
 
             val slug = cleanLabel.lowercase(Locale.ROOT)
                 .replace(Regex("[^a-z0-9]+"), ".")
@@ -233,12 +258,95 @@ class LauncherGridDetector(private val context: Context) {
                 col = col,
                 row = row,
                 isPlaceholder = matchedApp == null,
-                iconKey = inferIconKey(cleanLabel),
+                iconKey = inferIconKey(matchedApp?.label ?: cleanLabel),
                 tint = palette[idx % palette.size],
-                category = inferCategory(cleanLabel)
+                category = inferCategory(matchedApp?.label ?: cleanLabel)
             )
         }
         return result
+    }
+
+    fun getCapturedFolders(cols: Int, rows: Int): List<FolderPlacement> {
+        val folders = loadStoredConfig().capturedShortcuts.filter { it.isFolder }
+        if (folders.isEmpty()) return emptyList()
+
+        val seenSlots = mutableSetOf<Pair<Int, Int>>()
+        val result = mutableListOf<FolderPlacement>()
+        folders.forEachIndexed { idx, folder ->
+            val col = folder.col.coerceIn(0, cols - 1)
+            val row = folder.row.coerceIn(0, rows - 1)
+            if (!seenSlots.add(Pair(col, row))) return@forEachIndexed
+            result += FolderPlacement(
+                id = "fld-cap-$idx",
+                name = folder.label.trim().take(32).ifBlank { "Folder" },
+                col = col,
+                row = row
+            )
+        }
+        return result
+    }
+
+    fun getCapturedDockIcons(): List<IconPlacement> {
+        val dock = loadStoredConfig().capturedDock
+        if (dock.isEmpty()) return emptyList()
+
+        val launchableApps = getInstalledLaunchableApps()
+        val byLowerLabel = launchableApps.associateBy { it.label.trim().lowercase(Locale.ROOT) }
+        val palette = listOf("#166534", "#1D4ED8", "#7C3AED", "#B45309", "#0F766E", "#BE123C")
+
+        return dock.mapIndexed { idx, shortcut ->
+            val cleanLabel = shortcut.label.trim()
+            val matchedApp = matchLaunchableApp(cleanLabel, launchableApps, byLowerLabel)
+            val slug = cleanLabel.lowercase(Locale.ROOT)
+                .replace(Regex("[^a-z0-9]+"), ".")
+                .trim('.')
+                .ifBlank { "dock.$idx" }
+
+            IconPlacement(
+                id = "ic-dock-$idx",
+                packageName = matchedApp?.packageName ?: "com.launcher.shortcut.$slug",
+                label = matchedApp?.label ?: cleanLabel.take(40),
+                col = idx,
+                row = 0,
+                isPlaceholder = matchedApp == null,
+                iconKey = inferIconKey(matchedApp?.label ?: cleanLabel),
+                tint = palette[idx % palette.size],
+                category = inferCategory(matchedApp?.label ?: cleanLabel)
+            )
+        }
+    }
+
+    private fun matchLaunchableApp(
+        cleanLabel: String,
+        launchableApps: List<LaunchableAppInfo>,
+        byLowerLabel: Map<String, LaunchableAppInfo>
+    ): LaunchableAppInfo? {
+        val lower = cleanLower(cleanLabel)
+        byLowerLabel[lower]?.let { return it }
+
+        // Handle launcher-truncated labels such as "Wize DataG..." or "Samsung Note…"
+        val withoutEllipsis = cleanLabel
+            .removeSuffix("...")
+            .removeSuffix("…")
+            .trim()
+        if (withoutEllipsis.length >= 3 && withoutEllipsis.length < cleanLabel.length) {
+            launchableApps.firstOrNull {
+                it.label.startsWith(withoutEllipsis, ignoreCase = true)
+            }?.let { return it }
+        }
+
+        val normalizedQuery = lower.replace(Regex("[^a-z0-9]"), "")
+        if (normalizedQuery.length >= 3) {
+            launchableApps.firstOrNull { app ->
+                app.label.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "") == normalizedQuery
+            }?.let { return it }
+        }
+
+        return launchableApps.firstOrNull { app ->
+            app.label.equals(cleanLabel, ignoreCase = true) ||
+                cleanLabel.contains(app.label, ignoreCase = true) ||
+                (cleanLabel.length >= 4 && app.label.contains(cleanLabel, ignoreCase = true))
+        }
     }
 
     fun getInstalledLaunchableApps(): List<LaunchableAppInfo> {
@@ -305,7 +413,7 @@ class LauncherGridDetector(private val context: Context) {
             "clock" in lower || "alarm" in lower -> "clock"
             "setting" in lower -> "settings"
             "gallery" in lower || "photo" in lower -> "image"
-            "chrome" in lower || "browser" in lower || "web" in lower -> "globe"
+            "chrome" in lower || "browser" in lower || "web" in lower || "duckduckgo" in lower -> "globe"
             else -> "smartphone"
         }
     }
@@ -313,11 +421,11 @@ class LauncherGridDetector(private val context: Context) {
     private fun inferCategory(label: String): String {
         val lower = label.lowercase(Locale.ROOT)
         return when {
-            "phone" in lower || "message" in lower || "mail" in lower || "whatsapp" in lower -> "Communication"
+            "phone" in lower || "message" in lower || "mail" in lower || "whatsapp" in lower || "messenger" in lower -> "Communication"
             "camera" in lower || "photo" in lower || "gallery" in lower -> "Photography"
-            "music" in lower || "youtube" in lower || "spotify" in lower || "video" in lower -> "Media"
+            "music" in lower || "youtube" in lower || "spotify" in lower || "video" in lower || "hoopla" in lower -> "Media"
             "map" in lower || "uber" in lower || "waze" in lower -> "Navigation"
-            "calendar" in lower || "note" in lower || "docs" in lower || "drive" in lower -> "Productivity"
+            "calendar" in lower || "note" in lower || "docs" in lower || "drive" in lower || "tasks" in lower -> "Productivity"
             "bank" in lower || "pay" in lower || "wallet" in lower -> "Finance"
             else -> "Utilities"
         }

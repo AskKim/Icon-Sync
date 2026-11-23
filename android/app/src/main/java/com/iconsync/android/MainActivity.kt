@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gridBadgeView: TextView
     private lateinit var gridMetaView: TextView
     private lateinit var accessibilityStatusView: TextView
+    private lateinit var accessibilityActionButton: TextView
     private lateinit var colsValueView: TextView
     private lateinit var rowsValueView: TextView
     private lateinit var downloadLocationStatusView: TextView
@@ -196,6 +197,9 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightStatusBars = !isDarkTheme
             isAppearanceLightNavigationBars = !isDarkTheme
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = true
+        }
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -308,10 +312,30 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(10), dp(8), dp(10), dp(8))
             background = roundedDrawable(bgMuted, borderCol, dp(10))
         }
+        accessibilityActionButton = createActionButton(
+            label = "Allow Restricted Settings (App Info)",
+            bgColor = accentGreen,
+            textColor = Color.WHITE,
+            borderColor = Color.TRANSPARENT
+        ) {
+            if (LauncherGridAccessibilityService.isEnabled(this)) {
+                launchHomeScreenScan()
+            } else {
+                showRestrictedSettingsGuideDialog()
+            }
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(8)
+            }
+        }
 
         statusCard.addView(statusTopRow)
         statusCard.addView(gridMetaView)
         statusCard.addView(accessibilityStatusView)
+        statusCard.addView(accessibilityActionButton)
         rootContainer.addView(statusCard)
 
         // 3. Grid Calibration & Accessibility Card
@@ -422,7 +446,13 @@ class MainActivity : AppCompatActivity() {
         )
         detectBtnRow.addView(
             createActionButton("Accessibility Settings", bgMuted, textPrimary, borderCol) {
-                openAccessibilitySettings()
+                if (!LauncherGridAccessibilityService.isEnabled(this) &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                ) {
+                    showRestrictedSettingsGuideDialog()
+                } else {
+                    openAccessibilitySettings()
+                }
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
@@ -601,24 +631,22 @@ class MainActivity : AppCompatActivity() {
 
         val scrollView = ScrollView(this).apply {
             isFillViewport = true
+            clipToPadding = true
             setBackgroundColor(bgPage)
             addView(rootContainer)
         }
 
         val basePad = dp(16)
-        ViewCompat.setOnApplyWindowInsetsListener(scrollView) { _, windowInsets ->
+        rootContainer.setPadding(basePad, basePad, basePad, basePad)
+        ViewCompat.setOnApplyWindowInsetsListener(scrollView) { view, windowInsets ->
             val insets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            rootContainer.setPadding(
-                basePad + insets.left,
-                basePad + insets.top,
-                basePad + insets.right,
-                basePad + insets.bottom
-            )
+            view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
             windowInsets
         }
         setContentView(scrollView)
+        ViewCompat.requestApplyInsets(scrollView)
 
         val restoredLog = savedInstanceState?.getCharSequence(KEY_LOG_TEXT)
         refreshStatus()
@@ -717,9 +745,10 @@ class MainActivity : AppCompatActivity() {
         }
         refreshLastSavedUi()
 
-        val iconCount = snapshot.screens.sumOf { it.icons.size }
+        val iconCount = snapshot.screens.sumOf { it.icons.size } + snapshot.dock.size
+        val folderCount = snapshot.screens.sumOf { it.folders.size }
         appendLog(
-            "Saved $displayName to $locationLabel (${snapshot.gridCols}x${snapshot.gridRows}, $iconCount icons across ${snapshot.screens.size} screen(s)).\n" +
+            "Saved $displayName to $locationLabel (${snapshot.gridCols}x${snapshot.gridRows}, $iconCount icons, $folderCount folders across ${snapshot.screens.size} screen(s)).\n" +
                 "$captureNote\nTap \"Open File\" or \"Open Folder\" above to access it immediately."
         )
     }
@@ -909,11 +938,68 @@ class MainActivity : AppCompatActivity() {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 startActivity(Intent.createChooser(shareIntent, "Share Icon Sync v2.0 Snapshot"))
-                val iconCount = snapshot.screens.sumOf { it.icons.size }
+                val iconCount = snapshot.screens.sumOf { it.icons.size } + snapshot.dock.size
                 appendLog("Sharing ${file.name} ($iconCount icons). $note")
             }.onFailure { err ->
                 appendLog("Share failed: ${err.message ?: "Unable to share snapshot"}")
             }
+        }
+    }
+
+    private fun showRestrictedSettingsGuideDialog() {
+        val message = buildString {
+            appendLine("On Android 13–16 (including Galaxy A15), sideloaded APKs require allowing Restricted Settings before enabling Accessibility:")
+            appendLine()
+            appendLine("1. Tap \"Open App Info\" below")
+            appendLine("2. Tap ⋮ (top-right menu) -> \"Allow restricted settings\"")
+            appendLine("3. Return or tap \"Accessibility Settings\" -> Installed apps -> Icon Sync Grid Detector -> On")
+            appendLine()
+            append("Tip: You can also export your installed app inventory without enabling Accessibility.")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Enable Accessibility on Android 13–16")
+            .setMessage(message)
+            .setPositiveButton("1. Open App Info") { _, _ ->
+                openAppInfoSettings()
+            }
+            .setNeutralButton("2. Accessibility") { _, _ ->
+                openAccessibilitySettings()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun openAppInfoSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+        }
+        val launched = runCatching {
+            startActivity(intent)
+        }.isSuccess
+        if (launched) {
+            appendLog("Opened App Info. Tap the top-right ⋮ menu -> \"Allow restricted settings\", then open Accessibility Settings.")
+        } else {
+            appendLog("Unable to open App Info automatically on this device.")
+        }
+    }
+
+    private fun launchHomeScreenScan() {
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        val launched = runCatching {
+            startActivity(homeIntent)
+        }.isSuccess
+        if (launched) {
+            Toast.makeText(
+                this,
+                "Viewing Home Screen — wait 1s, then switch back to Icon Sync",
+                Toast.LENGTH_LONG
+            ).show()
+            appendLog("Switched to Home Screen for live Accessibility capture. Return to Icon Sync to see captured icons.")
+        } else {
+            appendLog("Press your device Home button once, then return to Icon Sync.")
         }
     }
 
@@ -933,7 +1019,10 @@ class MainActivity : AppCompatActivity() {
         val detected = detector.detectGrid()
         val launcherName = detector.getLauncherDisplayName(detected.launcherPackage)
         val accEnabled = LauncherGridAccessibilityService.isEnabled(this)
-        val capturedCount = detector.getCapturedShortcutCount()
+        val capturedShortcuts = detector.getCapturedShortcutsRaw()
+        val capturedDock = detector.getCapturedDockRaw()
+        val capturedCount = capturedShortcuts.size
+        val dockCount = capturedDock.size
 
         currentCols = detected.cols
         currentRows = detected.rows
@@ -952,10 +1041,40 @@ class MainActivity : AppCompatActivity() {
             if (isDarkTheme) Color.parseColor("#334155") else Color.parseColor("#E4E7EC")
         }
         accessibilityStatusView.background = roundedDrawable(accBg, accBorder, dp(10))
-        accessibilityStatusView.text = if (accEnabled) {
-            "Accessibility Helper: Active ($capturedCount home icon(s) captured)"
-        } else {
-            "Accessibility Helper: Off — tap Accessibility Settings to capture exact home icons"
+        accessibilityStatusView.text = when {
+            accEnabled && (capturedCount > 0 || dockCount > 0) ->
+                "Accessibility Helper: Active ($capturedCount home + $dockCount dock icon(s) captured)"
+            accEnabled ->
+                "Accessibility Helper: Active (0 captured yet — tap Scan Home Screen Now)"
+            else ->
+                "Accessibility Helper: Off — allow restricted settings or export installed apps"
+        }
+
+        if (::accessibilityActionButton.isInitialized) {
+            accessibilityActionButton.text = if (accEnabled) {
+                "Scan Home Screen Now"
+            } else {
+                "Allow Restricted Settings (App Info)"
+            }
+        }
+
+        if (accEnabled && (capturedCount > 0 || dockCount > 0) && ::activityLogView.isInitialized) {
+            val currentLog = activityLogView.text?.toString().orEmpty()
+            if (currentLog.startsWith("Ready on ") ||
+                currentLog.startsWith("Switched to Home Screen") ||
+                currentLog.startsWith("Captured ")
+            ) {
+                val sampleHome = capturedShortcuts.take(8).joinToString(", ") {
+                    "${it.label}(${it.col},${it.row})"
+                }
+                val sampleDock = capturedDock.joinToString(", ") { it.label }
+                val summary = buildString {
+                    appendLine("Captured $capturedCount home item(s) and $dockCount dock icon(s) on ${detected.cols}×${detected.rows}:")
+                    if (sampleHome.isNotBlank()) appendLine("Home: $sampleHome${if (capturedCount > 8) " ..." else ""}")
+                    if (sampleDock.isNotBlank()) append("Dock: $sampleDock")
+                }
+                appendLog(summary)
+            }
         }
 
         colsValueView.text = currentCols.toString()

@@ -7,8 +7,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersionName = "2.3.0"
-val appVersionCode = 230
+val appVersionName = "2.3.1"
+val appVersionCode = 231
 
 android {
     namespace = "com.iconsync.android"

@@ -46,20 +46,23 @@ class LauncherBackupService(private val context: Context) {
         val detected = detector.detectGrid()
         val launcherName = detector.getLauncherDisplayName(detected.launcherPackage)
         val capturedIcons = detector.getCapturedIcons(detected.cols, detected.rows)
+        val capturedFolders = detector.getCapturedFolders(detected.cols, detected.rows)
+        val capturedDock = detector.getCapturedDockIcons()
 
         val pages: List<HomeScreenPage>
         val captureModeNote: String
-        if (capturedIcons.isNotEmpty()) {
+        if (capturedIcons.isNotEmpty() || capturedFolders.isNotEmpty() || capturedDock.isNotEmpty()) {
             pages = listOf(
                 HomeScreenPage(
                     id = "scr-main",
                     name = "Primary Home",
                     isPrimary = true,
                     order = 0,
-                    icons = capturedIcons
+                    icons = capturedIcons,
+                    folders = capturedFolders
                 )
             )
-            captureModeNote = "Captured ${capturedIcons.size} live home-screen icons via Accessibility."
+            captureModeNote = "Captured ${capturedIcons.size} home icon(s), ${capturedFolders.size} folder(s), and ${capturedDock.size} dock icon(s) via Accessibility."
         } else {
             val starter = buildInstalledStarterPages(detector, detected.cols, detected.rows)
             pages = starter.first
@@ -81,7 +84,8 @@ class LauncherBackupService(private val context: Context) {
             gridCols = detected.cols,
             gridRows = detected.rows,
             gridDetectionSource = detected.source,
-            screens = pages
+            screens = pages,
+            dock = capturedDock
         )
         return Pair(snapshot, captureModeNote)
     }
