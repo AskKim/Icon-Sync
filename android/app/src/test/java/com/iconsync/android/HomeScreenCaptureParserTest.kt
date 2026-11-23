@@ -125,4 +125,154 @@ class HomeScreenCaptureParserTest {
         assertNull(parsed.detectedRows)
         assertEquals(2, parsed.shortcuts.size)
     }
+
+    @Test
+    fun parsesSparsePageWithWidgetsMissingMiddleRowsAndPreservesRow5() {
+        val screenW = 1080
+        val screenH = 2340
+        val density = 2.8125f
+
+        val colXs = listOf(120, 330, 540, 750, 960)
+        val rowYs = listOf(260, 520, 790, 1060, 1330, 1600)
+        val dockY = 2010
+
+        fun cell(label: String, col: Int, row: Int, folder: Boolean = false): ObservedBoundsNode {
+            val cx = colXs[col]
+            val cy = rowYs[row]
+            return ObservedBoundsNode(label, cx - 80, cy - 95, cx + 80, cy + 95, isFolderHint = folder)
+        }
+
+        // Page 2 pattern: rows 0 & 1 full, 5x2 Facebook widget on rows 2..3, row 4 empty, 4 icons in row 5, 5 dock icons
+        val page2Nodes = listOf(
+            cell("Boone Coun...", 0, 0),
+            cell("2061 Indiana...", 1, 0),
+            cell("Point on map", 2, 0),
+            cell("1406 Teal Rd", 3, 0),
+            cell("Whitley Cou...", 4, 0),
+            cell("drive.google....", 0, 1),
+            cell("User Control ...", 1, 1),
+            cell("AlfredCamera", 2, 1),
+            cell("Hoffman, Illin...", 3, 1),
+            cell("drive.google....", 4, 1),
+            ObservedBoundsNode(
+                label = "Facebook Top Updates",
+                left = 40,
+                top = 695,
+                right = 1040,
+                bottom = 1155,
+                isWidget = true
+            ),
+            cell("Wish", 0, 5),
+            cell("drive.google....", 1, 5),
+            cell("Camera", 3, 5),
+            cell("wundergrou...", 4, 5),
+            ObservedBoundsNode("Phone", colXs[0] - 80, dockY - 95, colXs[0] + 80, dockY + 95),
+            ObservedBoundsNode("DuckDuckGo", colXs[1] - 80, dockY - 95, colXs[1] + 80, dockY + 95),
+            ObservedBoundsNode("Messenger", colXs[2] - 80, dockY - 95, colXs[2] + 80, dockY + 95),
+            ObservedBoundsNode("Camera", colXs[3] - 80, dockY - 95, colXs[3] + 80, dockY + 95),
+            ObservedBoundsNode("Facebook", colXs[4] - 80, dockY - 95, colXs[4] + 80, dockY + 95)
+        )
+
+        val parsedPage2 = HomeScreenCaptureParser.parse(
+            rawNodes = page2Nodes,
+            screenWidth = screenW,
+            screenHeight = screenH,
+            density = density,
+            pageNumber = 2,
+            totalPages = 11
+        )
+
+        assertEquals(5, parsedPage2.detectedCols)
+        assertEquals(6, parsedPage2.detectedRows)
+        assertEquals(14, parsedPage2.shortcuts.size)
+        assertEquals(5, parsedPage2.dock.size)
+        assertEquals(1, parsedPage2.widgets.size)
+        assertEquals(5, parsedPage2.widgets.first().spanX)
+        assertEquals(2, parsedPage2.widgets.first().spanY)
+        assertEquals(5, parsedPage2.shortcuts.first { it.label == "Wish" }.row)
+        assertEquals(2, parsedPage2.pageNumber)
+        assertEquals(11, parsedPage2.totalPages)
+    }
+
+    @Test
+    fun parsesSparseWidgetHeavyRightColumnPageAndUpperTwoRowPageWithDock() {
+        val screenW = 1080
+        val screenH = 2340
+        val density = 2.8125f
+
+        val colXs = listOf(120, 330, 540, 750, 960)
+        val rowYs = listOf(260, 520, 790, 1060, 1330, 1600)
+        val dockY = 2010
+
+        fun cell(label: String, col: Int, row: Int, folder: Boolean = false): ObservedBoundsNode {
+            val cx = colXs[col]
+            val cy = rowYs[row]
+            return ObservedBoundsNode(label, cx - 80, cy - 95, cx + 80, cy + 95, isFolderHint = folder)
+        }
+
+        // Page 3 pattern: 3x3 Phone widget cols 0..2 rows 0..2, Spotify(3,0), Claude(4,0), Google(3,1), Search 2x1(3..4,2), To-do List(2,5)
+        val page3Nodes = listOf(
+            ObservedBoundsNode("Voicemail", 40, 165, 620, 885, isWidget = true),
+            cell("Spotify", 3, 0),
+            cell("Claude", 4, 0),
+            cell("Google", 3, 1, folder = true),
+            ObservedBoundsNode("Google Search", 670, 695, 1040, 885, isWidget = true),
+            cell("To-do List", 2, 5),
+            ObservedBoundsNode("Phone", colXs[0] - 80, dockY - 95, colXs[0] + 80, dockY + 95),
+            ObservedBoundsNode("DuckDuckGo", colXs[1] - 80, dockY - 95, colXs[1] + 80, dockY + 95),
+            ObservedBoundsNode("Messenger", colXs[2] - 80, dockY - 95, colXs[2] + 80, dockY + 95),
+            ObservedBoundsNode("Camera", colXs[3] - 80, dockY - 95, colXs[3] + 80, dockY + 95),
+            ObservedBoundsNode("Facebook", colXs[4] - 80, dockY - 95, colXs[4] + 80, dockY + 95)
+        )
+
+        val parsedPage3 = HomeScreenCaptureParser.parse(
+            rawNodes = page3Nodes,
+            screenWidth = screenW,
+            screenHeight = screenH,
+            density = density,
+            pageNumber = 3,
+            totalPages = 11
+        )
+
+        assertEquals(5, parsedPage3.detectedCols)
+        assertEquals(6, parsedPage3.detectedRows)
+        assertEquals(4, parsedPage3.shortcuts.size)
+        assertEquals(5, parsedPage3.dock.size)
+        assertEquals(2, parsedPage3.widgets.size)
+        val todo = parsedPage3.shortcuts.first { it.label == "To-do List" }
+        assertEquals(2, todo.col)
+        assertEquals(5, todo.row)
+
+        // Page 4 pattern: only rows 0 & 1 populated + 5 dock icons
+        val page4Nodes = listOf(
+            cell("App 1", 0, 0),
+            cell("App 2", 1, 0),
+            cell("App 3", 2, 0),
+            cell("App 4", 3, 0),
+            cell("App 5", 4, 0),
+            cell("App 6", 0, 1),
+            cell("App 7", 1, 1),
+            cell("App 8", 2, 1),
+            ObservedBoundsNode("Phone", colXs[0] - 80, dockY - 95, colXs[0] + 80, dockY + 95),
+            ObservedBoundsNode("DuckDuckGo", colXs[1] - 80, dockY - 95, colXs[1] + 80, dockY + 95),
+            ObservedBoundsNode("Messenger", colXs[2] - 80, dockY - 95, colXs[2] + 80, dockY + 95),
+            ObservedBoundsNode("Camera", colXs[3] - 80, dockY - 95, colXs[3] + 80, dockY + 95),
+            ObservedBoundsNode("Facebook", colXs[4] - 80, dockY - 95, colXs[4] + 80, dockY + 95)
+        )
+
+        val parsedPage4 = HomeScreenCaptureParser.parse(
+            rawNodes = page4Nodes,
+            screenWidth = screenW,
+            screenHeight = screenH,
+            density = density,
+            pageNumber = 4,
+            totalPages = 11
+        )
+
+        assertEquals(5, parsedPage4.detectedCols)
+        assertEquals(6, parsedPage4.detectedRows)
+        assertEquals(8, parsedPage4.shortcuts.size)
+        assertEquals(5, parsedPage4.dock.size)
+        assertEquals(Pair(2, 11), HomeScreenCaptureParser.parsePageIndicator("Page 2 of 11"))
+    }
 }

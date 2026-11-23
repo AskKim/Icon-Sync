@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
@@ -17,14 +19,19 @@ import com.iconsync.android.grid.ObservedBoundsNode
 import kotlin.math.roundToInt
 
 /**
- * Opt-in AccessibilityService that inspects visible home-screen shortcut bounding boxes
- * to infer column x row counts, workspace shortcut coordinates, folders, and dock icons
- * on launchers without a public grid ContentProvider (such as Samsung One UI Home,
- * Pixel Launcher, and minimalist launchers).
+ * Opt-in AccessibilityService that inspects visible home-screen shortcut and widget
+ * bounding boxes to infer column x row counts, workspace shortcut coordinates, folders,
+ * widgets, multi-page layouts, and dock icons on launchers without a public grid
+ * ContentProvider (such as Samsung One UI Home, Pixel Launcher, and minimalist launchers).
  */
 class LauncherGridAccessibilityService : AccessibilityService() {
 
     private var lastProcessedTimestampMs: Long = 0L
+    private var lastZeroRetryTimestampMs: Long = 0L
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val trailingScanRunnable = Runnable {
+        scanActiveLauncherWindow(fromRetry = true)
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -33,15 +40,28 @@ class LauncherGridAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastProcessedTimestampMs < DEBOUNCE_INTERVAL_MS) return
-        scanActiveLauncherWindow(now)
+        val elapsed = now - lastProcessedTimestampMs
+        if (elapsed < DEBOUNCE_INTERVAL_MS) {
+            mainHandler.removeCallbacks(trailingScanRunnable)
+            mainHandler.postDelayed(trailingScanRunnable, TRAILING_RESCAN_DELAY_MS)
+            return
+        }
+        scanActiveLauncherWindow(now = now)
     }
 
     override fun onInterrupt() {
-        // No continuous state to release
+        mainHandler.removeCallbacks(trailingScanRunnable)
     }
 
-    private fun scanActiveLauncherWindow(now: Long = SystemClock.elapsedRealtime()) {
+    override fun onDestroy() {
+        mainHandler.removeCallbacks(trailingScanRunnable)
+        super.onDestroy()
+    }
+
+    private fun scanActiveLauncherWindow(
+        now: Long = SystemClock.elapsedRealtime(),
+        fromRetry: Boolean = false
+    ) {
         val detector = LauncherGridDetector(this)
         val launcherPkg = detector.detectActiveLauncherPackage()
         if (launcherPkg == "unknown.launcher") return
@@ -60,15 +80,23 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         val minTextLeafH = (12f * density).roundToInt()
 
         try {
-            if (isRecentsOrAppDrawer(root, depth = 0)) return
+            if (isRecentsOrAppDrawer(root, screenWidth, screenHeight, depth = 0)) return
 
             val primaryNodes = mutableListOf<ObservedBoundsNode>()
             val fallbackTextNodes = mutableListOf<ObservedBoundsNode>()
+            val widgetNodes = mutableListOf<ObservedBoundsNode>()
+            var observedPageIndicator: Pair<Int, Int>? = null
 
             collectShortcutNodes(
                 node = root,
                 primaryOut = primaryNodes,
                 fallbackOut = fallbackTextNodes,
+                widgetOut = widgetNodes,
+                onPageIndicator = { indicator ->
+                    if (observedPageIndicator == null) {
+                        observedPageIndicator = indicator
+                    }
+                },
                 screenWidth = screenWidth,
                 screenHeight = screenHeight,
                 minCellPx = minCellPx,
@@ -79,29 +107,43 @@ class LauncherGridAccessibilityService : AccessibilityService() {
                 depth = 0
             )
 
-            val candidateNodes = if (primaryNodes.size >= 2) {
+            val candidateItems = if (primaryNodes.size >= 2) {
                 primaryNodes
             } else {
                 primaryNodes + fallbackTextNodes
             }
-            if (candidateNodes.isEmpty()) return
+            val combinedNodes = candidateItems + widgetNodes
+
+            if (combinedNodes.isEmpty()) {
+                if (!fromRetry && now - lastZeroRetryTimestampMs > ZERO_RETRY_COOLDOWN_MS) {
+                    lastZeroRetryTimestampMs = now
+                    mainHandler.removeCallbacks(trailingScanRunnable)
+                    mainHandler.postDelayed(trailingScanRunnable, SETTLE_RETRY_DELAY_MS)
+                }
+                return
+            }
 
             val currentGrid = detector.detectGrid()
             val parsed = HomeScreenCaptureParser.parse(
-                rawNodes = candidateNodes,
+                rawNodes = combinedNodes,
                 screenWidth = screenWidth,
                 screenHeight = screenHeight,
                 density = density,
                 fallbackCols = currentGrid.cols,
-                fallbackRows = currentGrid.rows
+                fallbackRows = currentGrid.rows,
+                pageNumber = observedPageIndicator?.first,
+                totalPages = observedPageIndicator?.second
             )
 
-            if (parsed.shortcuts.isNotEmpty() || parsed.dock.isNotEmpty()) {
+            if (parsed.shortcuts.isNotEmpty() || parsed.dock.isNotEmpty() || parsed.widgets.isNotEmpty()) {
                 detector.saveAccessibilityCapture(
                     cols = parsed.detectedCols,
                     rows = parsed.detectedRows,
                     shortcuts = parsed.shortcuts,
-                    dock = parsed.dock
+                    dock = parsed.dock,
+                    widgets = parsed.widgets,
+                    pageNumber = parsed.pageNumber,
+                    totalPages = parsed.totalPages
                 )
             }
         } finally {
@@ -130,20 +172,47 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         return null
     }
 
-    private fun isRecentsOrAppDrawer(node: AccessibilityNodeInfo, depth: Int): Boolean {
-        if (depth > 5) return false
+    private fun isRecentsOrAppDrawer(
+        node: AccessibilityNodeInfo,
+        screenWidth: Int,
+        screenHeight: Int,
+        depth: Int
+    ): Boolean {
+        if (depth > 6 || !node.isVisibleToUser) return false
+
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.isEmpty ||
+            rect.right <= 0 ||
+            rect.left >= screenWidth ||
+            rect.bottom <= 0 ||
+            rect.top >= screenHeight
+        ) {
+            return false
+        }
+
         val viewId = node.viewIdResourceName?.lowercase().orEmpty()
         if (viewId.isNotEmpty()) {
             val isNonHomeOverlay = NON_HOME_VIEW_ID_TOKENS.any { token -> token in viewId }
-            if (isNonHomeOverlay) return true
+            val fillsSubstantialScreen = rect.width() >= (screenWidth * 0.45f).roundToInt() &&
+                rect.height() >= (screenHeight * 0.35f).roundToInt()
+            if (isNonHomeOverlay && fillsSubstantialScreen) {
+                return true
+            }
         }
+
         val textLower = node.text?.toString()?.trim()?.lowercase().orEmpty()
-        if (textLower == "close all") return true
+        if ((textLower == "close all" || textLower == "clear all") &&
+            rect.centerX() in 0 until screenWidth &&
+            rect.centerY() in 0 until screenHeight
+        ) {
+            return true
+        }
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             try {
-                if (isRecentsOrAppDrawer(child, depth + 1)) return true
+                if (isRecentsOrAppDrawer(child, screenWidth, screenHeight, depth + 1)) return true
             } finally {
                 recycleNodeCompat(child)
             }
@@ -155,6 +224,8 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         node: AccessibilityNodeInfo,
         primaryOut: MutableList<ObservedBoundsNode>,
         fallbackOut: MutableList<ObservedBoundsNode>,
+        widgetOut: MutableList<ObservedBoundsNode>,
+        onPageIndicator: (Pair<Int, Int>) -> Unit,
         screenWidth: Int,
         screenHeight: Int,
         minCellPx: Int,
@@ -178,18 +249,45 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         }
 
         val viewIdLower = node.viewIdResourceName?.lowercase().orEmpty()
+        val classNameLower = node.className?.toString()?.lowercase().orEmpty()
+
+        // Capture launcher page indicator (e.g. "Page 2 of 11" on One UI Home) before skipping chrome
+        HomeScreenCaptureParser.parsePageIndicator(node.contentDescription?.toString())?.let(onPageIndicator)
+        HomeScreenCaptureParser.parsePageIndicator(node.text?.toString())?.let(onPageIndicator)
+
         val nowInHotseat = inHotseat || "hotseat" in viewIdLower || "dock" in viewIdLower
         val centerOnScreen = rect.centerX() in 0 until screenWidth && rect.centerY() in 0 until screenHeight
 
+        // Capture AppWidgetHostView widgets as block footprints without descending into their internal controls
+        if (!nowInHotseat && isWidgetContainer(classNameLower, viewIdLower)) {
+            if (centerOnScreen &&
+                rect.width() >= minCellPx &&
+                rect.height() >= minCellPx &&
+                rect.height() <= (screenHeight * 0.78f).roundToInt()
+            ) {
+                val widgetTitle = extractWidgetTitle(node)
+                widgetOut += ObservedBoundsNode(
+                    label = widgetTitle,
+                    left = rect.left.coerceAtLeast(0),
+                    top = rect.top.coerceAtLeast(0),
+                    right = rect.right.coerceAtMost(screenWidth),
+                    bottom = rect.bottom.coerceAtMost(screenHeight),
+                    isWidget = true,
+                    providerHint = viewIdLower.ifBlank { classNameLower }
+                )
+            }
+            return
+        }
+
         if (centerOnScreen &&
-            isInteractiveNode(node) &&
+            isShortcutContainer(node, classNameLower, viewIdLower) &&
             rect.width() in minCellPx..maxCellW &&
             rect.height() in minCellPx..maxCellH
         ) {
             val extracted = extractNodeOrDescendantLabel(node, maxDepth = 4)
             if (extracted != null) {
                 val (cleanedLabel, folderHint) = extracted
-                val isFolder = folderHint || "folder" in viewIdLower
+                val isFolder = folderHint || "folder" in viewIdLower || "folder" in classNameLower
                 primaryOut += ObservedBoundsNode(
                     label = cleanedLabel,
                     left = rect.left,
@@ -220,7 +318,7 @@ class LauncherGridAccessibilityService : AccessibilityService() {
                     top = rect.top,
                     right = rect.right,
                     bottom = rect.bottom,
-                    isFolderHint = cleaned.second || "folder" in viewIdLower,
+                    isFolderHint = cleaned.second || "folder" in viewIdLower || "folder" in classNameLower,
                     inHotseat = nowInHotseat
                 )
             }
@@ -235,6 +333,8 @@ class LauncherGridAccessibilityService : AccessibilityService() {
                     node = child,
                     primaryOut = primaryOut,
                     fallbackOut = fallbackOut,
+                    widgetOut = widgetOut,
+                    onPageIndicator = onPageIndicator,
                     screenWidth = screenWidth,
                     screenHeight = screenHeight,
                     minCellPx = minCellPx,
@@ -250,9 +350,47 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isInteractiveNode(node: AccessibilityNodeInfo): Boolean {
+    private fun isWidgetContainer(classNameLower: String, viewIdLower: String): Boolean {
+        if ("appwidgethostview" in classNameLower || "widgethostview" in classNameLower) return true
+        return viewIdLower.endsWith("widget_host_view") || viewIdLower.endsWith("appwidget_container")
+    }
+
+    private fun isShortcutContainer(
+        node: AccessibilityNodeInfo,
+        classNameLower: String,
+        viewIdLower: String
+    ): Boolean {
         if (node.isClickable || node.isLongClickable) return true
-        return node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+        if (node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) return true
+        return "iconview" in classNameLower ||
+            "bubbletextview" in classNameLower ||
+            "foldericon" in classNameLower ||
+            "folder_icon" in viewIdLower
+    }
+
+    private fun extractWidgetTitle(node: AccessibilityNodeInfo): String {
+        val desc = HomeScreenCaptureParser.cleanShortcutLabel(node.contentDescription?.toString())?.first
+        if (!desc.isNullOrBlank()) return desc.take(40)
+        val childLabel = findFirstWidgetText(node, maxDepth = 4)
+        return childLabel?.take(40) ?: "App Widget"
+    }
+
+    private fun findFirstWidgetText(node: AccessibilityNodeInfo, maxDepth: Int): String? {
+        val ownText = node.text?.toString()?.trim()?.takeIf { it.length in 2..40 }
+        if (ownText != null) return ownText
+        val ownDesc = node.contentDescription?.toString()?.trim()?.takeIf { it.length in 2..40 }
+        if (ownDesc != null) return ownDesc
+        if (maxDepth <= 0) return null
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            try {
+                findFirstWidgetText(child, maxDepth - 1)?.let { return it }
+            } finally {
+                recycleNodeCompat(child)
+            }
+        }
+        return null
     }
 
     private fun extractNodeOrDescendantLabel(
@@ -286,8 +424,11 @@ class LauncherGridAccessibilityService : AccessibilityService() {
     }
 
     companion object {
-        private const val DEBOUNCE_INTERVAL_MS = 200L
-        private const val MAX_TREE_DEPTH = 24
+        private const val DEBOUNCE_INTERVAL_MS = 180L
+        private const val TRAILING_RESCAN_DELAY_MS = 220L
+        private const val SETTLE_RETRY_DELAY_MS = 380L
+        private const val ZERO_RETRY_COOLDOWN_MS = 1500L
+        private const val MAX_TREE_DEPTH = 26
 
         private val NON_HOME_VIEW_ID_TOKENS = listOf(
             "recents_view",

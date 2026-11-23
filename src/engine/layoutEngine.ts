@@ -83,20 +83,21 @@ export const LAUNCHER_GRID_CAPABILITIES: LauncherGridCapability[] = [
     supportsProviderQuery: false,
     supportsAccessibilityDetect: true,
     allowsCustomGrid: true,
-    minCols: 4,
-    maxCols: 7,
-    minRows: 5,
-    maxRows: 7,
+    minCols: 3,
+    maxCols: 8,
+    minRows: 3,
+    maxRows: 8,
     presets: [
       { cols: 4, rows: 5, label: '4 × 5 (Classic)' },
       { cols: 4, rows: 6, label: '4 × 6 (A15/A16)' },
+      { cols: 5, rows: 4, label: '5 × 4 (Compact)' },
       { cols: 5, rows: 5, label: '5 × 5' },
-      { cols: 5, rows: 6, label: '5 × 6 (S-Series)' },
+      { cols: 5, rows: 6, label: '5 × 6 (A15/S-Series)' },
       { cols: 6, rows: 6, label: '6 × 6 (Home Up)' },
       { cols: 7, rows: 7, label: '7 × 7 (Home Up Max)' },
     ],
     detectionNotes:
-      'Stock One UI supports 4×5 through 5×6; installing Samsung Good Lock Home Up unlocks custom grids up to 7×7.',
+      'Stock One UI supports 4×5 through 5×6 natively, and Samsung Good Lock Home Up unlocks custom grids across 3×3–8×8.',
   },
   {
     id: 'nova-launcher',
@@ -150,9 +151,9 @@ export const LAUNCHER_GRID_CAPABILITIES: LauncherGridCapability[] = [
     supportsAccessibilityDetect: false,
     allowsCustomGrid: true,
     minCols: 3,
-    maxCols: 6,
+    maxCols: 8,
     minRows: 3,
-    maxRows: 7,
+    maxRows: 8,
     presets: [
       { cols: 4, rows: 4, label: '4 × 4 (Mini)' },
       { cols: 5, rows: 4, label: '5 × 4 (Compact)' },
@@ -185,14 +186,14 @@ export const LAUNCHER_GRID_CAPABILITIES: LauncherGridCapability[] = [
 
 export function getLauncherCapability(launcherName: string): LauncherGridCapability {
   const lower = launcherName.toLowerCase();
-  if (lower.includes('pixel')) return LAUNCHER_GRID_CAPABILITIES[0];
-  if (lower.includes('one ui')) return LAUNCHER_GRID_CAPABILITIES[1];
-  if (lower.includes('nova')) return LAUNCHER_GRID_CAPABILITIES[2];
+  if (lower.includes('pixel') || lower.includes('nexuslauncher')) return LAUNCHER_GRID_CAPABILITIES[0];
+  if (lower.includes('one ui') || lower.includes('com.sec.android.app.launcher')) return LAUNCHER_GRID_CAPABILITIES[1];
+  if (lower.includes('nova') || lower.includes('teslacoilsw')) return LAUNCHER_GRID_CAPABILITIES[2];
   if (lower.includes('lawnchair')) return LAUNCHER_GRID_CAPABILITIES[3];
-  if (lower.includes('mini') || lower.includes('niagara') || lower.includes('smart')) {
+  if (lower.includes('mini') || lower.includes('niagara') || lower.includes('smart') || lower.includes('bitpit')) {
     return LAUNCHER_GRID_CAPABILITIES[4];
   }
-  if (lower.includes('quickstep') || lower.includes('aosp')) {
+  if (lower.includes('quickstep') || lower.includes('aosp') || lower.includes('launcher3')) {
     return LAUNCHER_GRID_CAPABILITIES[5];
   }
   return {

@@ -529,7 +529,7 @@ export function ImportRestoreModal({
                 <div>
                   <span className="text-[#6B7280] block text-[11px]">Target launcher resize</span>
                   <span className="font-medium text-[#111827]">
-                    {gridAnalysis.canResizeTargetLauncher ? 'Supported natively' : 'Not supported'}
+                    {gridAnalysis.canResizeTargetLauncher ? 'Supported natively' : 'Use Reflow / Scale'}
                   </span>
                 </div>
               </div>

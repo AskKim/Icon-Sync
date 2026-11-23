@@ -147,7 +147,7 @@ data class DetectedLauncherGrid(
     filename: 'LauncherGridDetector.kt',
     path: 'android/app/src/main/java/com/iconsync/android/grid/LauncherGridDetector.kt',
     language: 'kotlin',
-    summary: 'Auto-detects active launcher grid dimensions (4×5, 4×6, 5×4, 6×6, etc.) via launcher ContentProviders, Accessibility bounds, or user-reported SharedPreferences fallback.',
+    summary: 'Detects active launcher grid dimensions (3×3–8×8) via ContentProviders, multi-page Accessibility bounds + widgets, or user calibration.',
     content: `package com.iconsync.android.grid
 
 import android.content.Context
@@ -157,16 +157,41 @@ import android.os.Build
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.iconsync.android.model.DetectedLauncherGrid
+import com.iconsync.android.model.FolderPlacement
 import com.iconsync.android.model.GridDetectionSource
+import com.iconsync.android.model.HomeScreenPage
+import com.iconsync.android.model.IconPlacement
+import com.iconsync.android.model.WidgetPlacement
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.time.Instant
+import java.util.Locale
 
 @Serializable
 data class CapturedShortcut(
     val label: String,
     val col: Int,
-    val row: Int
+    val row: Int,
+    val isFolder: Boolean = false
+)
+
+@Serializable
+data class CapturedWidget(
+    val label: String,
+    val provider: String = "",
+    val col: Int,
+    val row: Int,
+    val spanX: Int = 2,
+    val spanY: Int = 1
+)
+
+@Serializable
+data class CapturedPage(
+    val pageNumber: Int,
+    val shortcuts: List<CapturedShortcut> = emptyList(),
+    val widgets: List<CapturedWidget> = emptyList(),
+    val capturedAtMs: Long = 0L
 )
 
 @Serializable
@@ -177,16 +202,18 @@ data class StoredGridConfig(
     val accRows: Int? = null,
     val preferUserGrid: Boolean = false,
     val capturedShortcuts: List<CapturedShortcut> = emptyList(),
+    val capturedWidgets: List<CapturedWidget> = emptyList(),
+    val capturedDock: List<CapturedShortcut> = emptyList(),
+    val capturedPages: List<CapturedPage> = emptyList(),
+    val reportedTotalPages: Int? = null,
     val lastCapturedAtMs: Long = 0L
 )
 
-/**
- * Resolves the active Android launcher's home-screen grid dimensions (cols x rows).
- *
- * Tier 1: Query known launcher ContentProviders (Nova, Lawnchair) when permitted.
- * Tier 2: Read latest cached bounds from opt-in LauncherGridAccessibilityService.
- * Tier 3: Fall back to user-reported custom grid stored in SharedPreferences.
- */
+data class LaunchableAppInfo(
+    val packageName: String,
+    val label: String
+)
+
 class LauncherGridDetector(private val context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -204,16 +231,14 @@ class LauncherGridDetector(private val context: Context) {
             )
         } else {
             @Suppress("DEPRECATION")
-            context.packageManager.resolveActivity(
-                intent,
-                PackageManager.MATCH_DEFAULT_ONLY
-            )
+            context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
         }
         return resolved?.activityInfo?.packageName ?: "unknown.launcher"
     }
 
     fun detectGrid(): DetectedLauncherGrid {
         val launcherPkg = detectActiveLauncherPackage()
+        val launcherName = getLauncherDisplayName(launcherPkg)
         val storedConfig = loadStoredConfig()
 
         val userCols = storedConfig.userCols
@@ -225,11 +250,10 @@ class LauncherGridDetector(private val context: Context) {
                 rows = userRows,
                 source = GridDetectionSource.USER_REPORTED,
                 confidence = "manual",
-                message = "Using calibrated \${userCols}x$userRows grid."
+                message = "Using calibrated \${userCols}x$userRows grid for $launcherName."
             )
         }
 
-        // Tier 1: Query launcher provider if exposed (e.g., Nova / Lawnchair)
         queryLauncherProvider(launcherPkg)?.let { (cols, rows) ->
             return DetectedLauncherGrid(
                 launcherPackage = launcherPkg,
@@ -237,11 +261,10 @@ class LauncherGridDetector(private val context: Context) {
                 rows = rows.coerceIn(3, 8),
                 source = GridDetectionSource.LAUNCHER_PROVIDER,
                 confidence = "verified",
-                message = "Queried $launcherPkg grid provider directly (\${cols}x$rows)."
+                message = "Queried $launcherName ($launcherPkg) grid provider directly (\${cols}x$rows)."
             )
         }
 
-        // Tier 2: Check AccessibilityService workspace cache
         val accCols = storedConfig.accCols
         val accRows = storedConfig.accRows
         if (accCols != null && accRows != null && accCols in 3..8 && accRows in 3..8) {
@@ -251,11 +274,10 @@ class LauncherGridDetector(private val context: Context) {
                 rows = accRows,
                 source = GridDetectionSource.AUTO_ACCESSIBILITY,
                 confidence = "verified",
-                message = "Detected via Accessibility workspace bounds (\${accCols}x$accRows)."
+                message = "Detected via Accessibility bounds on $launcherName (\${accCols}x\${accRows})."
             )
         }
 
-        // Tier 3: User-reported custom grid
         if (userCols != null && userRows != null && userCols in 3..8 && userRows in 3..8) {
             return DetectedLauncherGrid(
                 launcherPackage = launcherPkg,
@@ -267,40 +289,65 @@ class LauncherGridDetector(private val context: Context) {
             )
         }
 
-        // Safe OEM default heuristic
         return DetectedLauncherGrid(
             launcherPackage = launcherPkg,
             cols = 4,
             rows = 5,
             source = GridDetectionSource.FALLBACK_HEURISTIC,
             confidence = "estimated",
-            message = "$launcherPkg did not expose grid dimensions. Enable Accessibility or calibrate below."
+            message = "$launcherName does not expose a public grid provider. Enable Accessibility detection or pick your grid below."
         )
     }
 
-    fun saveUserReportedGrid(cols: Int, rows: Int) {
+    fun saveAccessibilityCapture(
+        cols: Int?,
+        rows: Int?,
+        shortcuts: List<CapturedShortcut>,
+        dock: List<CapturedShortcut> = emptyList(),
+        widgets: List<CapturedWidget> = emptyList(),
+        pageNumber: Int? = null,
+        totalPages: Int? = null
+    ) {
         val current = loadStoredConfig()
-        saveStoredConfig(
-            current.copy(
-                userCols = cols.coerceIn(3, 8),
-                userRows = rows.coerceIn(3, 8),
-                preferUserGrid = true
-            )
+        val observedMaxCols = maxOf(
+            (shortcuts.maxOfOrNull { it.col } ?: -1) + 1,
+            widgets.maxOfOrNull { it.col + it.spanX } ?: 0
         )
-    }
+        val observedMaxRows = maxOf(
+            (shortcuts.maxOfOrNull { it.row } ?: -1) + 1,
+            widgets.maxOfOrNull { it.row + it.spanY } ?: 0
+        )
+        val boundedCols = (cols ?: current.accCols)?.let { maxOf(it, observedMaxCols).coerceIn(3, 8) }
+            ?: observedMaxCols.takeIf { it in 3..8 }
+        val boundedRows = (rows ?: current.accRows)?.let { maxOf(it, observedMaxRows).coerceIn(3, 8) }
+            ?: observedMaxRows.takeIf { it in 3..8 }
 
-    fun resetToAutoDetect() {
-        val current = loadStoredConfig()
-        saveStoredConfig(current.copy(preferUserGrid = false))
-    }
+        val effectiveCols = boundedCols ?: current.userCols ?: 5
+        val effectiveRows = boundedRows ?: current.userRows ?: 6
+        val nowMs = System.currentTimeMillis()
 
-    fun saveAccessibilityDetectedGrid(cols: Int, rows: Int) {
-        val current = loadStoredConfig()
+        val updatedPages = if (pageNumber != null && pageNumber in 1..40) {
+            val existing = current.capturedPages.filterNot { it.pageNumber == pageNumber }
+            (existing + CapturedPage(
+                pageNumber = pageNumber,
+                shortcuts = shortcuts.distinctBy { Pair(it.col, it.row) },
+                widgets = widgets.distinctBy { Pair(it.col, it.row) },
+                capturedAtMs = nowMs
+            )).sortedBy { it.pageNumber }
+        } else {
+            current.capturedPages
+        }
+
         saveStoredConfig(
             current.copy(
-                accCols = cols.coerceIn(3, 8),
-                accRows = rows.coerceIn(3, 8),
-                lastCapturedAtMs = System.currentTimeMillis()
+                accCols = boundedCols,
+                accRows = boundedRows,
+                capturedShortcuts = updatedPages.firstOrNull()?.shortcuts ?: shortcuts,
+                capturedWidgets = updatedPages.firstOrNull()?.widgets ?: widgets,
+                capturedDock = if (dock.isNotEmpty()) dock.take(8) else current.capturedDock,
+                capturedPages = updatedPages,
+                reportedTotalPages = totalPages ?: current.reportedTotalPages,
+                lastCapturedAtMs = nowMs
             )
         )
     }
@@ -308,39 +355,26 @@ class LauncherGridDetector(private val context: Context) {
     private fun loadStoredConfig(): StoredGridConfig {
         val serialized = prefs.getString(KEY_STORED_GRID_CONFIG, null)
         if (!serialized.isNullOrBlank()) {
-            val decoded = runCatching { json.decodeFromString<StoredGridConfig>(serialized) }.getOrNull()
-            if (decoded != null) {
-                return decoded
-            }
+            runCatching { json.decodeFromString<StoredGridConfig>(serialized) }.getOrNull()?.let { return it }
         }
-
-        val hasLegacyKeys = prefs.contains(KEY_USER_COLS) ||
-            prefs.contains(KEY_USER_ROWS) ||
-            prefs.contains(KEY_ACC_COLS) ||
-            prefs.contains(KEY_ACC_ROWS)
-
-        if (hasLegacyKeys) {
-            val migrated = StoredGridConfig(
-                userCols = prefs.getInt(KEY_USER_COLS, -1).takeIf { it in 3..8 },
-                userRows = prefs.getInt(KEY_USER_ROWS, -1).takeIf { it in 3..8 },
-                accCols = prefs.getInt(KEY_ACC_COLS, -1).takeIf { it in 3..8 },
-                accRows = prefs.getInt(KEY_ACC_ROWS, -1).takeIf { it in 3..8 }
-            )
-            saveStoredConfig(migrated)
-            return migrated
-        }
-
         return StoredGridConfig()
     }
 
     private fun saveStoredConfig(config: StoredGridConfig) {
-        prefs.edit {
-            putString(KEY_STORED_GRID_CONFIG, json.encodeToString(config))
-            remove(KEY_USER_COLS)
-            remove(KEY_USER_ROWS)
-            remove(KEY_ACC_COLS)
-            remove(KEY_ACC_ROWS)
-        }
+        prefs.edit { putString(KEY_STORED_GRID_CONFIG, json.encodeToString(config)) }
+    }
+
+    fun getLauncherDisplayName(launcherPkg: String): String {
+        if (launcherPkg == "unknown.launcher") return "Unknown Launcher"
+        return runCatching {
+            val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getApplicationInfo(launcherPkg, PackageManager.ApplicationInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getApplicationInfo(launcherPkg, 0)
+            }
+            context.packageManager.getApplicationLabel(appInfo).toString().ifBlank { launcherPkg }
+        }.getOrElse { launcherPkg }
     }
 
     private fun queryLauncherProvider(launcherPkg: String): Pair<Int, Int>? {
@@ -349,28 +383,20 @@ class LauncherGridDetector(private val context: Context) {
             "app.lawnchair" -> "content://app.lawnchair.settings/grid".toUri()
             else -> return null
         }
-
         return runCatching {
-            context.contentResolver.query(providerUri, arrayOf("cols", "rows"), null, null, null)
-                ?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val cols = cursor.getInt(0)
-                        val rows = cursor.getInt(1)
-                        if (cols in 3..8 && rows in 3..8) Pair(cols, rows) else null
-                    } else {
-                        null
-                    }
-                }
+            context.contentResolver.query(providerUri, arrayOf("cols", "rows"), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val cols = cursor.getInt(0)
+                    val rows = cursor.getInt(1)
+                    if (cols in 3..8 && rows in 3..8) Pair(cols, rows) else null
+                } else null
+            }
         }.getOrNull()
     }
 
     companion object {
         private const val PREFS_NAME = "icon_sync_grid_prefs"
         private const val KEY_STORED_GRID_CONFIG = "stored_grid_config"
-        private const val KEY_USER_COLS = "user_grid_cols"
-        private const val KEY_USER_ROWS = "user_grid_rows"
-        private const val KEY_ACC_COLS = "acc_grid_cols"
-        private const val KEY_ACC_ROWS = "acc_grid_rows"
     }
 }`,
   },

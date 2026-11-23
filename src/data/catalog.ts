@@ -75,6 +75,10 @@ export const ANDROID_APP_CATALOG: AppCatalogEntry[] = [
   { packageName: 'com.sec.android.gallery3d', label: 'Gallery', iconKey: 'image', tint: '#BE123C', category: 'Photography' },
   { packageName: 'com.samsung.android.app.notes', label: 'Samsung Notes', iconKey: 'sticky-note', tint: '#C2410C', category: 'Productivity' },
   { packageName: 'com.sec.android.app.myfiles', label: 'My Files', iconKey: 'folder', tint: '#D97706', category: 'Utilities' },
+  { packageName: 'com.duckduckgo.mobile.android', label: 'DuckDuckGo', iconKey: 'globe', tint: '#DE5833', category: 'Utilities' },
+  { packageName: 'com.facebook.orca', label: 'Messenger', iconKey: 'message-circle', tint: '#0084FF', category: 'Communication' },
+  { packageName: 'com.facebook.katana', label: 'Facebook', iconKey: 'users', tint: '#1877F2', category: 'Communication' },
+  { packageName: 'com.anthropic.claude', label: 'Claude', iconKey: 'sparkles', tint: '#D97757', category: 'Productivity' },
 ];
 
 export interface WidgetTemplate {
@@ -451,27 +455,31 @@ export function createInitialDevices(): DeviceProfile[] {
     ],
   };
 
-  // Dedicated Samsung Galaxy A15 (SM-A156U) profile — One UI 6.1, 4x6 grid
+  // Dedicated Samsung Galaxy A15 (SM-A156U1) profile — Android 16 · One UI 8, 5x6 grid + 5-icon dock
   const galaxyA15: DeviceProfile = {
     id: 'dev-galaxy-a15',
-    name: 'Galaxy A15',
-    modelCode: 'SM-A156U',
+    name: 'Galaxy A15 5G',
+    modelCode: 'SM-A156U1',
     manufacturer: 'Samsung',
-    androidVersion: 'Android 14 · One UI 6.1',
-    launcher: 'One UI Home (A15)',
+    androidVersion: 'Android 16 · One UI 8',
+    launcher: 'One UI Home',
     formFactor: 'phone',
-    gridCols: 4,
+    gridCols: 5,
     gridRows: 6,
-    gridDetectionSource: 'oem-profile',
+    gridDetectionSource: 'auto-accessibility',
     gridConfidence: 'verified',
-    gridDetectedAt: '2026-11-21T06:55:00.000Z',
+    gridDetectedAt: '2026-11-23T08:25:00.000Z',
     wallpaperId: 'architectural-glass',
-    lastScannedAt: '2026-11-21T06:55:00.000Z',
+    lastScannedAt: '2026-11-23T08:25:00.000Z',
     installedPackages: [
       'com.google.android.dialer',
+      'com.duckduckgo.mobile.android',
+      'com.facebook.orca',
+      'com.google.android.GoogleCamera',
+      'com.facebook.katana',
+      'com.anthropic.claude',
       'com.google.android.apps.messaging',
       'com.android.chrome',
-      'com.google.android.GoogleCamera',
       'com.google.android.gm',
       'com.google.android.calendar',
       'com.google.android.apps.maps',
@@ -490,9 +498,10 @@ export function createInitialDevices(): DeviceProfile[] {
     ],
     dock: [
       { id: 'dk-a15-1', ...catalogApp('com.google.android.dialer') },
-      { id: 'dk-a15-2', ...catalogApp('com.google.android.apps.messaging') },
-      { id: 'dk-a15-3', ...catalogApp('com.sec.android.app.sbrowser') },
+      { id: 'dk-a15-2', ...catalogApp('com.duckduckgo.mobile.android') },
+      { id: 'dk-a15-3', ...catalogApp('com.facebook.orca') },
       { id: 'dk-a15-4', ...catalogApp('com.google.android.GoogleCamera') },
+      { id: 'dk-a15-5', ...catalogApp('com.facebook.katana') },
     ],
     screens: [
       {
@@ -509,7 +518,7 @@ export function createInitialDevices(): DeviceProfile[] {
             kind: 'weather',
             col: 0,
             row: 0,
-            spanX: 4,
+            spanX: 5,
             spanY: 1,
             syncEnabled: true,
             updatedAt: now,
@@ -532,7 +541,7 @@ export function createInitialDevices(): DeviceProfile[] {
             spanX: 2,
             spanY: 1,
             syncEnabled: true,
-            updatedAt: '2026-11-21T06:55:00.000Z',
+            updatedAt: '2026-11-23T08:25:00.000Z',
             updatedByDeviceId: 'dev-galaxy-a15',
             config: {
               primaryZone: 'PST · San Francisco',
@@ -542,12 +551,15 @@ export function createInitialDevices(): DeviceProfile[] {
           },
         ],
         icons: [
-          { id: 'ic-a15-1', ...catalogApp('com.sec.android.gallery3d'), col: 0, row: 4 },
-          { id: 'ic-a15-2', ...catalogApp('com.samsung.android.app.notes'), col: 1, row: 4 },
-          { id: 'ic-a15-3', ...catalogApp('com.google.android.gm'), col: 2, row: 4 },
-          { id: 'ic-a15-4', ...catalogApp('com.google.android.apps.maps'), col: 3, row: 4 },
-          { id: 'ic-a15-5', ...catalogApp('com.android.chrome'), col: 0, row: 5 },
-          { id: 'ic-a15-6', ...catalogApp('com.google.android.youtube'), col: 1, row: 5 },
+          { id: 'ic-a15-1', ...catalogApp('com.spotify.music'), col: 3, row: 1 },
+          { id: 'ic-a15-2', ...catalogApp('com.anthropic.claude'), col: 4, row: 1 },
+          { id: 'ic-a15-3', ...catalogApp('com.sec.android.gallery3d'), col: 0, row: 4 },
+          { id: 'ic-a15-4', ...catalogApp('com.samsung.android.app.notes'), col: 1, row: 4 },
+          { id: 'ic-a15-5', ...catalogApp('com.google.android.gm'), col: 2, row: 4 },
+          { id: 'ic-a15-6', ...catalogApp('com.google.android.apps.maps'), col: 3, row: 4 },
+          { id: 'ic-a15-7', ...catalogApp('com.google.android.apps.docs'), col: 4, row: 4 },
+          { id: 'ic-a15-8', ...catalogApp('com.android.chrome'), col: 0, row: 5 },
+          { id: 'ic-a15-9', ...catalogApp('com.google.android.youtube'), col: 1, row: 5 },
         ],
         folders: [
           {
@@ -564,7 +576,7 @@ export function createInitialDevices(): DeviceProfile[] {
           },
           {
             id: 'fld-a15-work',
-            name: 'Work Suite',
+            name: 'Google',
             col: 3,
             row: 5,
             tint: '#334155',
@@ -582,10 +594,11 @@ export function createInitialDevices(): DeviceProfile[] {
         order: 1,
         widgets: [],
         icons: [
-          { id: 'ic-a15-7', ...catalogApp('com.whatsapp'), col: 0, row: 0 },
-          { id: 'ic-a15-8', ...catalogApp('com.spotify.music'), col: 1, row: 0 },
-          { id: 'ic-a15-9', ...catalogApp('com.android.settings'), col: 2, row: 0 },
-          { id: 'ic-a15-10', ...catalogApp('com.google.android.calculator'), col: 3, row: 0 },
+          { id: 'ic-a15-10', ...catalogApp('com.whatsapp'), col: 0, row: 0 },
+          { id: 'ic-a15-11', ...catalogApp('com.android.settings'), col: 1, row: 0 },
+          { id: 'ic-a15-12', ...catalogApp('com.google.android.calculator'), col: 2, row: 0 },
+          { id: 'ic-a15-13', ...catalogApp('com.google.android.apps.photos'), col: 3, row: 0 },
+          { id: 'ic-a15-14', ...catalogApp('com.sec.android.app.myfiles'), col: 4, row: 0 },
         ],
         folders: [],
       },
@@ -1233,10 +1246,10 @@ export function createInitialBackups(devices: DeviceProfile[]): LayoutBackupSnap
 
   const galaxyA15Backup = buildBackupSnapshot(galaxyA15, {
     id: 'bk-galaxy-a15-oneui',
-    name: 'Galaxy A15 — One UI 6.1 Setup',
-    notes: 'Samsung Galaxy A15 (SM-A156U) 4×6 layout with Samsung Internet, Notes, My Files, Work Suite folder, and synced Weather/Clock widgets.',
+    name: 'Galaxy A15 5G — One UI 8 (5×6)',
+    notes: 'Samsung Galaxy A15 5G (SM-A156U1, Android 16) 5×6 layout with 5-icon dock, Spotify, Claude, Google & Samsung folders, and synced Weather/Clock widgets.',
     storage: 'cloud',
-    createdAt: '2026-11-21T06:56:00.000Z',
+    createdAt: '2026-11-23T08:25:00.000Z',
     includeIconArt: true,
   });
 

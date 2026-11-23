@@ -45,24 +45,28 @@ class LauncherBackupService(private val context: Context) {
         val detector = LauncherGridDetector(context)
         val detected = detector.detectGrid()
         val launcherName = detector.getLauncherDisplayName(detected.launcherPackage)
-        val capturedIcons = detector.getCapturedIcons(detected.cols, detected.rows)
-        val capturedFolders = detector.getCapturedFolders(detected.cols, detected.rows)
+        val capturedPages = detector.getCapturedPages(detected.cols, detected.rows)
         val capturedDock = detector.getCapturedDockIcons()
 
         val pages: List<HomeScreenPage>
         val captureModeNote: String
-        if (capturedIcons.isNotEmpty() || capturedFolders.isNotEmpty() || capturedDock.isNotEmpty()) {
-            pages = listOf(
-                HomeScreenPage(
-                    id = "scr-main",
-                    name = "Primary Home",
-                    isPrimary = true,
-                    order = 0,
-                    icons = capturedIcons,
-                    folders = capturedFolders
+        if (capturedPages.isNotEmpty() || capturedDock.isNotEmpty()) {
+            pages = if (capturedPages.isNotEmpty()) {
+                capturedPages
+            } else {
+                listOf(
+                    HomeScreenPage(
+                        id = "scr-main",
+                        name = "Primary Home",
+                        isPrimary = true,
+                        order = 0
+                    )
                 )
-            )
-            captureModeNote = "Captured ${capturedIcons.size} home icon(s), ${capturedFolders.size} folder(s), and ${capturedDock.size} dock icon(s) via Accessibility."
+            }
+            val iconTotal = pages.sumOf { it.icons.size }
+            val folderTotal = pages.sumOf { it.folders.size }
+            val widgetTotal = pages.sumOf { it.widgets.size }
+            captureModeNote = "Captured $iconTotal home icon(s), $folderTotal folder(s), $widgetTotal widget(s), and ${capturedDock.size} dock icon(s) across ${pages.size} screen(s) via Accessibility."
         } else {
             val starter = buildInstalledStarterPages(detector, detected.cols, detected.rows)
             pages = starter.first

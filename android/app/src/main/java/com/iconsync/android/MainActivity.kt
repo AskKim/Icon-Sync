@@ -18,6 +18,7 @@ import android.provider.DocumentsContract
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -637,16 +638,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         val basePad = dp(16)
-        rootContainer.setPadding(basePad, basePad, basePad, basePad)
-        ViewCompat.setOnApplyWindowInsetsListener(scrollView) { view, windowInsets ->
+        rootContainer.setPadding(basePad, basePad, basePad, basePad + dp(8))
+
+        val outerContainer = FrameLayout(this).apply {
+            setBackgroundColor(bgPage)
+            addView(
+                scrollView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(outerContainer) { view, windowInsets ->
             val insets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
             view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
             windowInsets
         }
-        setContentView(scrollView)
-        ViewCompat.requestApplyInsets(scrollView)
+        setContentView(outerContainer)
+        ViewCompat.requestApplyInsets(outerContainer)
 
         val restoredLog = savedInstanceState?.getCharSequence(KEY_LOG_TEXT)
         refreshStatus()
@@ -747,8 +760,9 @@ class MainActivity : AppCompatActivity() {
 
         val iconCount = snapshot.screens.sumOf { it.icons.size } + snapshot.dock.size
         val folderCount = snapshot.screens.sumOf { it.folders.size }
+        val widgetCount = snapshot.screens.sumOf { it.widgets.size }
         appendLog(
-            "Saved $displayName to $locationLabel (${snapshot.gridCols}x${snapshot.gridRows}, $iconCount icons, $folderCount folders across ${snapshot.screens.size} screen(s)).\n" +
+            "Saved $displayName to $locationLabel (${snapshot.gridCols}x${snapshot.gridRows}, $iconCount icons, $folderCount folders, $widgetCount widgets across ${snapshot.screens.size} screen(s)).\n" +
                 "$captureNote\nTap \"Open File\" or \"Open Folder\" above to access it immediately."
         )
     }
@@ -1020,8 +1034,12 @@ class MainActivity : AppCompatActivity() {
         val launcherName = detector.getLauncherDisplayName(detected.launcherPackage)
         val accEnabled = LauncherGridAccessibilityService.isEnabled(this)
         val capturedShortcuts = detector.getCapturedShortcutsRaw()
+        val capturedWidgets = detector.getCapturedWidgetsRaw()
         val capturedDock = detector.getCapturedDockRaw()
-        val capturedCount = capturedShortcuts.size
+        val capturedCount = detector.getCapturedShortcutCount()
+        val widgetCount = detector.getCapturedWidgetCount()
+        val pageCount = detector.getCapturedPageCount()
+        val totalReportedPages = detector.getReportedTotalPages()
         val dockCount = capturedDock.size
 
         currentCols = detected.cols
@@ -1042,10 +1060,17 @@ class MainActivity : AppCompatActivity() {
         }
         accessibilityStatusView.background = roundedDrawable(accBg, accBorder, dp(10))
         accessibilityStatusView.text = when {
-            accEnabled && (capturedCount > 0 || dockCount > 0) ->
-                "Accessibility Helper: Active ($capturedCount home + $dockCount dock icon(s) captured)"
+            accEnabled && (capturedCount > 0 || dockCount > 0 || widgetCount > 0) -> {
+                val pageNote = when {
+                    pageCount > 0 && totalReportedPages != null && totalReportedPages > pageCount ->
+                        " · $pageCount/$totalReportedPages pages"
+                    pageCount > 1 -> " · $pageCount pages"
+                    else -> ""
+                }
+                "Accessibility Helper: Active ($capturedCount home + $widgetCount widget + $dockCount dock$pageNote)"
+            }
             accEnabled ->
-                "Accessibility Helper: Active (0 captured yet — tap Scan Home Screen Now)"
+                "Accessibility Helper: Active (0 captured yet — tap Scan Home Screen Now & swipe pages)"
             else ->
                 "Accessibility Helper: Off — allow restricted settings or export installed apps"
         }
@@ -1058,7 +1083,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        if (accEnabled && (capturedCount > 0 || dockCount > 0) && ::activityLogView.isInitialized) {
+        if (accEnabled && (capturedCount > 0 || dockCount > 0 || widgetCount > 0) && ::activityLogView.isInitialized) {
             val currentLog = activityLogView.text?.toString().orEmpty()
             if (currentLog.startsWith("Ready on ") ||
                 currentLog.startsWith("Switched to Home Screen") ||
@@ -1067,10 +1092,15 @@ class MainActivity : AppCompatActivity() {
                 val sampleHome = capturedShortcuts.take(8).joinToString(", ") {
                     "${it.label}(${it.col},${it.row})"
                 }
+                val sampleWidgets = capturedWidgets.take(4).joinToString(", ") {
+                    "${it.label}[${it.spanX}x${it.spanY}@${it.col},${it.row}]"
+                }
                 val sampleDock = capturedDock.joinToString(", ") { it.label }
+                val pagePhrase = if (pageCount > 1) " across $pageCount pages" else ""
                 val summary = buildString {
-                    appendLine("Captured $capturedCount home item(s) and $dockCount dock icon(s) on ${detected.cols}×${detected.rows}:")
-                    if (sampleHome.isNotBlank()) appendLine("Home: $sampleHome${if (capturedCount > 8) " ..." else ""}")
+                    appendLine("Captured $capturedCount home item(s), $widgetCount widget(s), and $dockCount dock icon(s)$pagePhrase on ${detected.cols}×${detected.rows}:")
+                    if (sampleHome.isNotBlank()) appendLine("Home: $sampleHome${if (capturedShortcuts.size > 8) " ..." else ""}")
+                    if (sampleWidgets.isNotBlank()) appendLine("Widgets: $sampleWidgets")
                     if (sampleDock.isNotBlank()) append("Dock: $sampleDock")
                 }
                 appendLog(summary)
@@ -1123,8 +1153,8 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("DEPRECATION")
                 packageManager.getPackageInfo(packageName, 0)
             }
-            info.versionName ?: "2.3.0"
-        }.getOrDefault("2.3.0")
+            info.versionName ?: "2.3.2"
+        }.getOrDefault("2.3.2")
     }
 
     private fun createCard(bgColor: Int, borderColor: Int): LinearLayout {

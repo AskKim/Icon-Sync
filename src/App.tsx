@@ -112,7 +112,7 @@ import { SavedFileModal } from './components/SavedFileModal';
 
 type ActiveTab = 'screens' | 'backups' | 'widgets' | 'how-it-works' | 'developer';
 
-const VAULT_SCHEMA_REVISION = 7;
+const VAULT_SCHEMA_REVISION = 8;
 
 interface UndoSnapshot {
   deviceId: string;
@@ -155,18 +155,26 @@ function normalizeLoadedVault(rawState: CloudVaultState): {
         needsMigration && d.id === 'dev-tab-s9' && d.gridCols === 5 && d.gridRows === 6 && def
           ? def
           : d;
+      const upgradedDevice =
+        needsMigration &&
+        upgradedTabS9.id === 'dev-galaxy-a15' &&
+        (upgradedTabS9.modelCode === 'SM-A156U' ||
+          (upgradedTabS9.gridCols === 4 && upgradedTabS9.gridRows === 6)) &&
+        def
+          ? def
+          : upgradedTabS9;
 
       return {
-        ...upgradedTabS9,
+        ...upgradedDevice,
         gridDetectionSource:
-          upgradedTabS9.gridDetectionSource ?? def?.gridDetectionSource ?? 'auto-accessibility',
-        gridConfidence: upgradedTabS9.gridConfidence ?? def?.gridConfidence ?? 'verified',
+          upgradedDevice.gridDetectionSource ?? def?.gridDetectionSource ?? 'auto-accessibility',
+        gridConfidence: upgradedDevice.gridConfidence ?? def?.gridConfidence ?? 'verified',
         gridDetectedAt:
-          upgradedTabS9.gridDetectedAt ?? def?.gridDetectedAt ?? upgradedTabS9.lastScannedAt,
+          upgradedDevice.gridDetectedAt ?? def?.gridDetectedAt ?? upgradedDevice.lastScannedAt,
         installedPackages:
-          Array.isArray(upgradedTabS9.installedPackages) &&
-          upgradedTabS9.installedPackages.length > 0
-            ? upgradedTabS9.installedPackages
+          Array.isArray(upgradedDevice.installedPackages) &&
+          upgradedDevice.installedPackages.length > 0
+            ? upgradedDevice.installedPackages
             : def?.installedPackages ?? [],
       };
     });
@@ -190,9 +198,12 @@ function normalizeLoadedVault(rawState: CloudVaultState): {
       (b) => b.id !== 'bk-galaxy-a15-16-oneui'
     );
     normalizedBackups = normalizedBackups.map((b) => {
-      if (b.includesIconArt !== undefined) return b;
       const def = defaultBackups.find((d) => d.id === b.id);
       if (!def) return b;
+      if (b.id === 'bk-galaxy-a15-oneui' && b.gridCols === 4 && b.gridRows === 6) {
+        return def;
+      }
+      if (b.includesIconArt !== undefined) return b;
       return {
         ...b,
         includesIconArt: def.includesIconArt,
