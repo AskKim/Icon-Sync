@@ -110,7 +110,7 @@ jobs:
           echo "$BADGING" | head -n 20
           echo "$BADGING" | grep -Fq "package: name='com.iconsync.android.debug'"
           echo "$BADGING" | grep -Fq "versionName='${APP_VERSION}-debug'"
-          echo "$BADGING" | grep -Fq "sdkVersion:'26'"
+          echo "$BADGING" | grep -Eq "^(minSdkVersion|sdkVersion):'26'$"
           echo "$BADGING" | grep -Fq "targetSdkVersion:'35'"
 
       - name: Check signing secrets availability
