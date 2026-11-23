@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -91,9 +91,20 @@ export function ImportRestoreModal({
   onReportTargetGrid,
   onDownloadSampleBackup,
 }: ImportRestoreModalProps) {
+  const titleId = useId();
   const [sourceTab, setSourceTab] = useState<'cloud' | 'file'>(
     initialBackupId || backups.length > 0 ? 'cloud' : 'file'
   );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
   const [selectedBackupId, setSelectedBackupId] = useState<string>(
     initialBackupId ?? backups[0]?.id ?? ''
   );
@@ -272,12 +283,15 @@ export function ImportRestoreModal({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="w-full max-w-2xl bg-white border border-[#E4E7EC] rounded-2xl shadow-xl overflow-hidden my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-4 border-b border-[#F1F3F6] flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-[#111827]">
+            <h2 id={titleId} className="text-base font-semibold text-[#111827]">
               Import & Restore Home Screen Layout
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
@@ -294,7 +308,7 @@ export function ImportRestoreModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-6 max-h-[82vh] overflow-y-auto">
+        <div className="p-6 space-y-6 max-h-[82dvh] overflow-y-auto">
           {/* Step 1: Backup Source & Target Device */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

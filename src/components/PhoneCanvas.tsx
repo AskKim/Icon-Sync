@@ -236,11 +236,12 @@ export function PhoneCanvas({
                       gridColumn: `${col + 1} / span 1`,
                       gridRow: `${row + 1} / span 1`,
                     }}
-                    title={`Empty slot (${col + 1}, ${row + 1}) — click to place app, folder, or widget`}
-                    className={`rounded-2xl border border-dashed flex items-center justify-center transition-colors cursor-pointer ${
+                    aria-label={`Empty slot (${col + 1}, ${row + 1})`}
+                    title={`Empty slot (${col + 1}, ${row + 1}) — tap to place app, folder, or widget`}
+                    className={`rounded-2xl border border-dashed flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:border-emerald-300 focus-visible:text-white ${
                       isCellSelected
                         ? 'border-emerald-300 bg-emerald-400/20 text-emerald-100'
-                        : 'border-white/0 hover:border-white/30 hover:bg-white/10 text-transparent hover:text-white/80'
+                        : 'border-white/12 hover:border-white/35 hover:bg-white/10 text-white/25 hover:text-white/85'
                     }`}
                   >
                     <Plus className="w-4 h-4" />

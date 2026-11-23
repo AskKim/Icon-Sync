@@ -67,32 +67,30 @@ export function AndroidWidgetTile({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      className={`group relative w-full h-full rounded-[20px] px-3 py-2.5 text-left transition-all duration-150 overflow-hidden cursor-pointer select-none backdrop-blur-md bg-[#111827]/72 text-white border ${
+      className={`group relative w-full h-full rounded-[20px] px-3 py-2.5 text-left transition-all duration-150 overflow-hidden select-none backdrop-blur-md bg-[#111827]/72 text-white border ${
         isSelected
           ? 'border-[#4ADE80] ring-2 ring-[#4ADE80]/50'
           : 'border-white/15 hover:border-white/35'
       }`}
     >
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-label={`Select ${widget.title} widget`}
+        className="absolute inset-0 z-0 rounded-[20px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4ADE80]"
+      />
+
       {widget.syncEnabled && (
         <span
           title="Cross-device sync enabled"
-          className="absolute top-2 right-2.5 flex items-center gap-1 text-[10px] font-medium text-emerald-300/90"
+          className="pointer-events-none relative z-10 float-right flex items-center gap-1 text-[10px] font-medium text-emerald-300/90"
         >
           <RefreshCw className="w-2.5 h-2.5" />
         </span>
       )}
 
       {kind === 'weather' && (
-        <div className="h-full flex items-center justify-between gap-2 pr-4">
+        <div className="relative z-10 h-full flex items-center justify-between gap-2 pr-4 pointer-events-none">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-[11px] text-white/75 truncate">
               <CloudSun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
@@ -106,7 +104,7 @@ export function AndroidWidgetTile({
             type="button"
             onClick={handleToggleUnit}
             title="Toggle °F / °C (syncs across devices)"
-            className="text-xl font-semibold tracking-tight tabular-nums text-white hover:text-emerald-200 transition-colors shrink-0 px-1.5 py-0.5 rounded-lg hover:bg-white/10"
+            className="pointer-events-auto relative z-20 text-xl font-semibold tracking-tight tabular-nums text-white hover:text-emerald-200 transition-colors shrink-0 px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer"
           >
             {displayTemp()}
           </button>
@@ -114,7 +112,7 @@ export function AndroidWidgetTile({
       )}
 
       {kind === 'tasks' && (
-        <div className="h-full flex flex-col justify-between">
+        <div className="relative z-10 h-full flex flex-col justify-between pointer-events-none">
           <div className="text-[11px] font-semibold text-white/90 truncate pr-5">
             {config.listTitle ?? 'Focus Tasks'}
           </div>
@@ -124,7 +122,7 @@ export function AndroidWidgetTile({
                 key={task.id}
                 type="button"
                 onClick={(e) => handleToggleTask(e, task.id)}
-                className="w-full flex items-center gap-2 text-left text-[11px] leading-tight py-0.5 rounded hover:bg-white/10 transition-colors"
+                className="pointer-events-auto relative z-20 w-full flex items-center gap-2 text-left text-[11px] leading-tight py-0.5 rounded hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <span
                   className={`w-3.5 h-3.5 rounded-[4px] flex items-center justify-center shrink-0 border ${
@@ -149,7 +147,7 @@ export function AndroidWidgetTile({
       )}
 
       {kind === 'calendar' && (
-        <div className="h-full flex flex-col justify-between">
+        <div className="relative z-10 h-full flex flex-col justify-between pointer-events-none">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/90 pr-5">
             <Calendar className="w-3 h-3 text-sky-300 shrink-0" />
             <span className="truncate">{config.calendarAccount ?? 'Agenda'}</span>
@@ -168,7 +166,7 @@ export function AndroidWidgetTile({
       )}
 
       {kind === 'clock' && (
-        <div className="h-full flex flex-col justify-center pr-3">
+        <div className="relative z-10 h-full flex flex-col justify-center pr-3 pointer-events-none">
           <div className="flex items-center gap-1 text-[10px] text-white/65 truncate">
             <Clock className="w-2.5 h-2.5 shrink-0" />
             <span className="truncate">{(config.primaryZone ?? 'PST').split('·')[0].trim()}</span>
@@ -183,7 +181,7 @@ export function AndroidWidgetTile({
       )}
 
       {kind === 'music' && (
-        <div className="h-full flex items-center justify-between gap-2.5 pr-4">
+        <div className="relative z-10 h-full flex items-center justify-between gap-2.5 pr-4 pointer-events-none">
           <div className="min-w-0">
             <p className="text-xs font-semibold text-white truncate">
               {config.trackTitle ?? 'Kiasmos — Blurred'}
@@ -196,7 +194,7 @@ export function AndroidWidgetTile({
             type="button"
             onClick={handleTogglePlay}
             aria-label={config.isPlaying ? 'Pause track' : 'Play track'}
-            className="w-8 h-8 rounded-full bg-white text-[#111827] flex items-center justify-center shrink-0 hover:bg-emerald-100 transition-colors"
+            className="pointer-events-auto relative z-20 w-8 h-8 rounded-full bg-white text-[#111827] flex items-center justify-center shrink-0 hover:bg-emerald-100 transition-colors cursor-pointer"
           >
             {config.isPlaying ? (
               <Pause className="w-3.5 h-3.5" />
@@ -208,7 +206,7 @@ export function AndroidWidgetTile({
       )}
 
       {kind === 'battery' && (
-        <div className="h-full flex flex-col justify-center pr-3">
+        <div className="relative z-10 h-full flex flex-col justify-center pr-3 pointer-events-none">
           <div className="flex items-center gap-1 text-[10px] text-emerald-300">
             <BatteryCharging className="w-3 h-3 shrink-0" />
             <span className="font-mono tabular-nums">92%</span>

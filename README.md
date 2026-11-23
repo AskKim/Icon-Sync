@@ -1,16 +1,12 @@
-<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-
 # Icon Sync
 
-**Open-source (`AGPL-3.0-or-later`) Android Home Screen Layout Backup, Cross-Grid Adaptation (`6×6 → 5×4`), Replace/Merge Restoration, Developer Diagnostics, Cross-Device Widget Sync Studio & Native Android APK — Alpha 0.1 (`v0.1.0-alpha.1`).**
+**Open-source (GPL-3.0+) Android Home Screen Layout Backup, Cross-Grid Adaptation (`6×6 → 5×4`), Replace/Merge Restoration, Developer Diagnostics, Cross-Device Widget Sync Studio & Native Android APK.**
 
-> **Release Status:** `v0.1.0-alpha.1` (Alpha 0.1 Pre-Release) · **License:** [GNU AGPL v3.0 or later](./LICENSE)
->
+Icon Sync helps Android owners capture, organize, back up, and migrate home screens, supplemental pages, folders, dock shortcuts, and widget configurations across devices and launchers — including **Google Pixel**, **Samsung Galaxy A15**, **Samsung Galaxy A16**, **Samsung Galaxy S24 Ultra**, **Galaxy Tab S9 (Nova Launcher `6×6`)**, and custom/minimalist launchers (registerable via **+ Add Device**) — without losing layout structure or re-dragging every icon by hand.
+
 > **New to this codebase or exploring with an AI assistant?** Read **[ARCHITECTURE.md](./ARCHITECTURE.md)** for a beginner-friendly 60-second mental model, annotated file tree, data flow diagrams, and "How do I change X?" recipes.
 >
 > **Persistence Note:** We will not be adding a real database for this project. Icon Sync intentionally stores workspace state in `.data/icon-sync-vault.json` (via the Express API), browser `localStorage`, and portable `.json` backup exports.
-
-Icon Sync helps Android owners capture, organize, back up, and migrate home screens, supplemental pages, folders, dock shortcuts, and widget configurations across devices and launchers — including **Google Pixel**, **Samsung Galaxy A15**, **Samsung Galaxy A16**, **Samsung Galaxy S24 Ultra**, **Galaxy Tab S9 (Nova Launcher `6×6`)**, and custom/minimalist launchers (registerable via **+ Add Device**) — without losing layout structure or re-dragging every icon by hand.
 
 ---
 
@@ -24,7 +20,7 @@ Icon Sync helps Android owners capture, organize, back up, and migrate home scre
    - Supports **Replace Mode**, **Merge Mode** (folder deduplication + open-slot placement), and one-click **Undo Restore**.
 4. **Actionable Feedback & Recovery Flows**: Every success, warning, or error banner explains what happened and offers concrete recovery buttons (e.g., retry Cloud Vault sync, download JSON fallback, add supplemental screen & place, auto-repair malformed JSON, or report a custom grid).
 5. **Developer Tools & Troubleshooting Panel (`Developer` tab or `Ctrl+Shift+D`)**: Live Express server diagnostics (`/api/diagnostics`), browser cache inspection, Workspace Integrity Auditor with one-click Auto-Fix, interactive **Grid Remap Lab** with visual occupancy heatmaps, live Activity/API log, Fault Simulator, Backup JSON Validator/Repair tool, and Android APK / Kotlin source browser.
-6. **Native Android APK & GitHub Actions CI/CD**: Includes a complete Gradle Android project under `/android/` (`com.iconsync.android`, `IconSync-v0.1.0-alpha.1-*.apk`) with deterministic Android SDK 35 setup, Kotlin unit tests covering all 5 remap strategies, Web CI, Alpha/Stable Releases with SHA-256 checksums, CodeQL, Dependabot, and automated GitHub repository metadata sync.
+6. **Native Android APK & GitHub Actions CI/CD**: Includes a complete Gradle Android project under `/android/` (`com.iconsync.android`, `IconSync-v2.3.0-*.apk`) with automated GitHub Actions workflows for APK builds, unit tests, Web CI, Releases with SHA-256 checksums, CodeQL, and Dependabot.
 
 ---
 
@@ -44,36 +40,27 @@ Icon Sync helps Android owners capture, organize, back up, and migrate home scre
 
 | Workflow | File | Purpose |
 | :--- | :--- | :--- |
-| **Build Icon Sync Android APK** | `.github/workflows/build-android-apk.yml` | Verifies & installs Android SDK 35 via `sdkmanager`, accepts licenses, runs Kotlin `GridRemapperTest`, non-blocking `lintDebug`, assembles `IconSync-v0.1.0-alpha.1-debug.apk` (plus signed `release` APK when signing secrets exist), generates `SHA256SUMS.txt`, and uploads artifacts. |
-| **Web Studio CI** | `.github/workflows/ci-web.yml` | Runs `npm install`/`npm ci`, TypeScript typecheck (`npm run lint`), `npm run build`, and live Express `/api/health` + `/api/diagnostics` smoke tests. |
-| **Automated Release** | `.github/workflows/release.yml` | Triggered on `v*.*.*` tags (e.g., `v0.1.0-alpha.1`) or manual dispatch; builds Web Studio tarball + Android APK, generates `SHA256SUMS.txt`, auto-marks Alpha/Beta/RC tags as pre-releases, attaches `RELEASE_NOTES_<tag>.md`, and publishes a GitHub Release. |
-| **Sync & Optimize GitHub Repo** | `.github/workflows/sync-repo-metadata.yml` | Reads `.github/repo-metadata.json` to sync repository description, homepage, topics (`agplv3`, `android`, `icon-sync`, etc.), merge hygiene settings, and standardized Issue/PR labels. |
+| **Build Icon Sync Android APK** | `.github/workflows/build-android-apk.yml` | Runs Kotlin `GridRemapperTest`, `lintDebug`, assembles `IconSync-v2.3.0-debug.apk` (plus signed `release` APK when signing secrets are configured), generates `SHA256SUMS.txt`, and uploads artifacts. |
+| **Web Studio CI** | `.github/workflows/ci-web.yml` | Runs `npm ci`, TypeScript typecheck (`npm run lint`), `npm run build`, and live Express `/api/health` + `/api/diagnostics` smoke tests. |
+| **Automated Release** | `.github/workflows/release.yml` | Triggered on `v*.*.*` tags or manual dispatch; builds Web Studio tarball + Android APK, generates `SHA256SUMS.txt`, and publishes a GitHub Release. |
 | **CodeQL & Security Audit** | `.github/workflows/codeql-security.yml` | Runs CodeQL static analysis (`javascript-typescript`) and `npm audit --omit=dev --audit-level=high` weekly and on PRs. |
+| **Sync Repo Description & Topics** | `.github/workflows/sync-repo-metadata.yml` | One-click `workflow_dispatch` action that sets the GitHub repository description and topic tags via GitHub CLI. |
 | **Dependabot** | `.github/dependabot.yml` | Keeps npm, Gradle (`/android`), and GitHub Actions dependencies up to date weekly. |
 
-### Optional GitHub Secrets
-Add these under **Settings → Secrets and variables → Actions** when ready:
-- **Release APK Signing (optional):** `ICONSYNC_KEYSTORE_BASE64`, `ICONSYNC_KEYSTORE_PASSWORD`, `ICONSYNC_KEY_ALIAS`, `ICONSYNC_KEY_PASSWORD`
-- **Repository Metadata Sync (optional if default `GITHUB_TOKEN` lacks repo admin scope):** `REPO_METADATA_TOKEN` (fine-grained PAT with `Administration: Read & Write` and `Issues: Read & Write`)
-
----
-
-## Publishing Alpha 0.1 (`v0.1.0-alpha.1`)
-
-```bash
-git tag -a v0.1.0-alpha.1 -m "Icon Sync v0.1.0-alpha.1 (Alpha 0.1, AGPL-3.0-or-later)"
-git push origin v0.1.0-alpha.1
-```
-
-Pushing `v0.1.0-alpha.1` automatically triggers `.github/workflows/release.yml`, builds the Web Studio bundle and `IconSync-v0.1.0-alpha.1-debug.apk` (plus signed release APK if secrets are set), generates `SHA256SUMS.txt`, attaches `RELEASE_NOTES_v0.1.0-alpha.1.md`, and publishes a **GitHub Pre-release**.
+### Optional Release APK Signing Secrets
+To produce a signed release APK in GitHub Actions, add these repository secrets under **Settings → Secrets and variables → Actions**:
+- `ICONSYNC_KEYSTORE_BASE64` — Base64-encoded `.jks` keystore
+- `ICONSYNC_KEYSTORE_PASSWORD` — Keystore password
+- `ICONSYNC_KEY_ALIAS` — Signing key alias
+- `ICONSYNC_KEY_PASSWORD` — Signing key password
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js 20+ and npm 10+
-- *(Optional for local Android builds)* JDK 17, Android SDK 35 (`platforms;android-35`, `build-tools;35.0.0`), and Gradle 8.9
+- Node.js 26+ and npm 10+
+- *(Optional for local Android builds)* JDK 17, Android SDK 35, and Gradle 8.9
 
 ### Local Web Studio Development
 
@@ -100,25 +87,21 @@ Open `http://localhost:3000` in your browser. Press `Ctrl+Shift+D` (or click **D
 
 | Method | Path | Purpose |
 | :--- | :--- | :--- |
-| `GET` | `/api/health` | Service health check (`icon-sync-cloud-vault`, version `0.1.0-alpha.1`) |
+| `GET` | `/api/health` | Service health check (`icon-sync-cloud-vault`) |
 | `GET` | `/api/diagnostics` | Returns vault file existence/size, legacy vault migration status, uptime, and Node version |
 | `GET` | `/api/vault` | Returns persisted Cloud Vault state (`devices`, `backups`, `widgetSyncPolicy`, `schemaRevision`) |
-| `PUT` | `/api/vault` | Saves full Cloud Vault state atomically (`0600`) to `.data/icon-sync-vault.json` |
+| `PUT` | `/api/vault` | Saves full Cloud Vault state to `.data/icon-sync-vault.json` |
 | `POST` | `/api/backups` | Adds or updates a single `LayoutBackupSnapshot` |
 | `DELETE` | `/api/backups/:id` | Deletes a backup snapshot by ID |
 
 ---
 
-## Documentation, Privacy & Governance
+## Documentation & Governance
 
 - **Architecture & Beginner Guide**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 - **Privacy Policy**: [PRIVACY.md](./PRIVACY.md)
 - **Privacy Data Map**: [DATA_MAP.md](./DATA_MAP.md)
 - **Security Policy**: [SECURITY.md](./SECURITY.md)
-- **Support & Troubleshooting**: [SUPPORT.md](./SUPPORT.md)
 - **Contributing Guide**: [CONTRIBUTING.md](./CONTRIBUTING.md)
-- **Code of Conduct**: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
-- **Alpha 0.1 Release Notes**: [RELEASE_NOTES_v0.1.0-alpha.1.md](./RELEASE_NOTES_v0.1.0-alpha.1.md)
 - **Changelog**: [CHANGELOG.md](./CHANGELOG.md)
-- **Legal Notice & Third-Party Licenses**: [NOTICE.md](./NOTICE.md)
-- **License**: [GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`)](./LICENSE)
+- **License**: [GNU General Public License v3.0 or later (`GPL-3.0-or-later`)](./LICENSE)

@@ -1,8 +1,8 @@
 /**
  * @file src/services/cloudApi.ts
- * @license AGPL-3.0-or-later
+ * @license GPL-3.0-or-later
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * ============================================================================
  * ICON SYNC — CLOUD VAULT API CLIENT, LOCAL CACHE & SAFE FILE EXPORTERS
@@ -172,7 +172,7 @@ export async function fetchServerDiagnostics(): Promise<ServerDiagnosticsSnapsho
     return {
       ok: false,
       service: 'icon-sync-cloud-vault',
-      version: '0.1.0-alpha.1',
+      version: '2.3.0',
       vaultFileExists: false,
       vaultFilePath: '.data/icon-sync-vault.json',
       vaultSizeBytes: 0,
@@ -431,6 +431,19 @@ export async function removeBackupFromCloud(
   }
 }
 
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  // Defer revocation so Android WebView and mobile browsers complete reading the blob stream
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function downloadBackupJson(backup: LayoutBackupSnapshot): void {
   const safeName = backup.name
     .toLowerCase()
@@ -438,27 +451,13 @@ export function downloadBackupJson(backup: LayoutBackupSnapshot): void {
     .replace(/(^-|-$)/g, '');
   const filename = `icon-sync-${safeName || 'backup'}-${backup.createdAt.slice(0, 10)}.json`;
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(blob, filename);
 }
 
 export function downloadDiagnosticsBundle(payload: unknown): void {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `icon-sync-diagnostics-${stamp}.json`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(blob, `icon-sync-diagnostics-${stamp}.json`);
 }
 
 export function downloadMissingAppsFile(
@@ -521,14 +520,10 @@ export function downloadMissingAppsFile(
 </html>`;
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    triggerBlobDownload(
+      blob,
+      `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.html`
+    );
     return;
   }
 
@@ -550,12 +545,8 @@ export function downloadMissingAppsFile(
   ];
 
   const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.txt`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(
+    blob,
+    `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.txt`
+  );
 }

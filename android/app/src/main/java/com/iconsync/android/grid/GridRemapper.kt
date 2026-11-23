@@ -247,10 +247,10 @@ object GridRemapper {
         val iconsPerPage = mutableListOf<MutableList<IconPlacement>>()
 
         fun addPage(): Int {
-            grids += Array(rows) { BooleanArray(cols) }
-            widgetsPerPage += mutableListOf()
-            foldersPerPage += mutableListOf()
-            iconsPerPage += mutableListOf()
+            grids.add(Array(rows) { BooleanArray(cols) })
+            widgetsPerPage.add(mutableListOf())
+            foldersPerPage.add(mutableListOf())
+            iconsPerPage.add(mutableListOf())
             return grids.lastIndex
         }
 

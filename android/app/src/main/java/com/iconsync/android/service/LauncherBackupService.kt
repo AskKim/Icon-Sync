@@ -9,6 +9,7 @@ import com.iconsync.android.model.LayoutBackupSnapshot
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 import java.time.Instant
 
 /**
@@ -25,8 +26,9 @@ class LauncherBackupService(private val context: Context) {
     fun exportSnapshotToCache(name: String, pages: List<HomeScreenPage>): File {
         val detector = LauncherGridDetector(context)
         val detected = detector.detectGrid()
+        val timestamp = System.currentTimeMillis()
         val snapshot = LayoutBackupSnapshot(
-            id = "bk-${System.currentTimeMillis()}",
+            id = "bk-$timestamp",
             name = name,
             schemaVersion = "2.0",
             createdAt = Instant.now().toString(),
@@ -38,8 +40,19 @@ class LauncherBackupService(private val context: Context) {
             screens = pages
         )
 
-        val outFile = File(context.cacheDir, "icon-sync-backup-${System.currentTimeMillis()}.json")
-        outFile.writeText(json.encodeToString(snapshot))
+        val outFile = File(context.cacheDir, "icon-sync-backup-$timestamp.json")
+        val tmpFile = File.createTempFile("icon-sync-backup-$timestamp-", ".tmp", context.cacheDir)
+        try {
+            tmpFile.writeText(json.encodeToString(snapshot))
+            if (!tmpFile.renameTo(outFile)) {
+                throw IOException("Failed to atomically rename ${tmpFile.name} to ${outFile.name}")
+            }
+        } catch (e: Exception) {
+            if (tmpFile.exists()) {
+                tmpFile.delete()
+            }
+            throw e
+        }
         return outFile
     }
 }

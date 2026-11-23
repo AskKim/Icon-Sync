@@ -16,7 +16,7 @@
  * a newly registered 5x4 Mini Launcher device).
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { Plus, Smartphone, X } from 'lucide-react';
 import { DeviceProfile } from '../types/layout';
 import { WALLPAPERS } from '../data/catalog';
@@ -86,6 +86,7 @@ const QUICK_DEVICE_PRESETS: {
 ];
 
 export function AddDeviceModal({ onClose, onCreateDevice }: AddDeviceModalProps) {
+  const titleId = useId();
   const [name, setName] = useState('Compact Mini Phone');
   const [modelCode, setModelCode] = useState('MINI-5X4');
   const [manufacturer, setManufacturer] = useState('Custom Android');
@@ -95,6 +96,16 @@ export function AddDeviceModal({ onClose, onCreateDevice }: AddDeviceModalProps)
   const [gridCols, setGridCols] = useState<number>(5);
   const [gridRows, setGridRows] = useState<number>(4);
   const [wallpaperId, setWallpaperId] = useState<string>(WALLPAPERS[0].id);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const handleApplyPreset = (preset: (typeof QUICK_DEVICE_PRESETS)[number]) => {
     setName(preset.name);
@@ -232,6 +243,9 @@ export function AddDeviceModal({ onClose, onCreateDevice }: AddDeviceModalProps)
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="w-full max-w-xl bg-white border border-[#E4E7EC] rounded-2xl shadow-xl overflow-hidden my-auto"
         onClick={(e) => e.stopPropagation()}
       >
@@ -239,7 +253,7 @@ export function AddDeviceModal({ onClose, onCreateDevice }: AddDeviceModalProps)
           <div className="flex items-center gap-2.5">
             <Smartphone className="w-4 h-4 text-[#166534]" />
             <div>
-              <h2 className="text-base font-semibold text-[#111827]">
+              <h2 id={titleId} className="text-base font-semibold text-[#111827]">
                 Register Android Device / Custom Launcher
               </h2>
               <p className="text-xs text-[#6B7280] mt-0.5">
@@ -257,7 +271,7 @@ export function AddDeviceModal({ onClose, onCreateDevice }: AddDeviceModalProps)
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[85dvh] overflow-y-auto">
           {/* Quick Presets */}
           <div>
             <p className="text-xs font-semibold text-[#374151] mb-2">Quick Starting Templates</p>

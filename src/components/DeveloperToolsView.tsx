@@ -242,6 +242,14 @@ export function DeveloperToolsView({
   });
 
   const handleCopyBundle = async () => {
+    if (!navigator.clipboard?.writeText) {
+      onNotify(
+        'warning',
+        'Clipboard Unavailable',
+        'Clipboard API is unavailable in this context. Use "Download Bundle" instead.'
+      );
+      return;
+    }
     try {
       await navigator.clipboard.writeText(JSON.stringify(buildFullDiagnosticsBundle(), null, 2));
       setCopiedBundle(true);

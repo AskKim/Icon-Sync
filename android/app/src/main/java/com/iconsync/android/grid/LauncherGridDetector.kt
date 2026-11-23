@@ -1,13 +1,24 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.iconsync.android.grid
 
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import com.iconsync.android.model.DetectedLauncherGrid
 import com.iconsync.android.model.GridDetectionSource
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class StoredGridConfig(
+    val userCols: Int? = null,
+    val userRows: Int? = null,
+    val accCols: Int? = null,
+    val accRows: Int? = null
+)
 
 /**
  * Resolves the active Android launcher's home-screen grid dimensions (cols x rows).
@@ -19,6 +30,10 @@ import com.iconsync.android.model.GridDetectionSource
 class LauncherGridDetector(private val context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
 
     fun detectActiveLauncherPackage(): String {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
@@ -39,6 +54,7 @@ class LauncherGridDetector(private val context: Context) {
 
     fun detectGrid(): DetectedLauncherGrid {
         val launcherPkg = detectActiveLauncherPackage()
+        val storedConfig = loadStoredConfig()
 
         // Tier 1: Query launcher provider if exposed (e.g., Nova / Lawnchair)
         queryLauncherProvider(launcherPkg)?.let { (cols, rows) ->
@@ -53,9 +69,9 @@ class LauncherGridDetector(private val context: Context) {
         }
 
         // Tier 2: Check AccessibilityService workspace cache
-        val accCols = prefs.getInt(KEY_ACC_COLS, -1)
-        val accRows = prefs.getInt(KEY_ACC_ROWS, -1)
-        if (accCols in 3..8 && accRows in 3..8) {
+        val accCols = storedConfig.accCols
+        val accRows = storedConfig.accRows
+        if (accCols != null && accRows != null && accCols in 3..8 && accRows in 3..8) {
             return DetectedLauncherGrid(
                 launcherPackage = launcherPkg,
                 cols = accCols,
@@ -67,9 +83,9 @@ class LauncherGridDetector(private val context: Context) {
         }
 
         // Tier 3: User-reported custom grid (required for private Mini/Minimalist launchers)
-        val userCols = prefs.getInt(KEY_USER_COLS, -1)
-        val userRows = prefs.getInt(KEY_USER_ROWS, -1)
-        if (userCols in 3..8 && userRows in 3..8) {
+        val userCols = storedConfig.userCols
+        val userRows = storedConfig.userRows
+        if (userCols != null && userRows != null && userCols in 3..8 && userRows in 3..8) {
             return DetectedLauncherGrid(
                 launcherPackage = launcherPkg,
                 cols = userCols,
@@ -92,23 +108,67 @@ class LauncherGridDetector(private val context: Context) {
     }
 
     fun saveUserReportedGrid(cols: Int, rows: Int) {
-        prefs.edit()
-            .putInt(KEY_USER_COLS, cols.coerceIn(3, 8))
-            .putInt(KEY_USER_ROWS, rows.coerceIn(3, 8))
-            .apply()
+        val current = loadStoredConfig()
+        saveStoredConfig(
+            current.copy(
+                userCols = cols.coerceIn(3, 8),
+                userRows = rows.coerceIn(3, 8)
+            )
+        )
     }
 
     fun saveAccessibilityDetectedGrid(cols: Int, rows: Int) {
-        prefs.edit()
-            .putInt(KEY_ACC_COLS, cols.coerceIn(3, 8))
-            .putInt(KEY_ACC_ROWS, rows.coerceIn(3, 8))
-            .apply()
+        val current = loadStoredConfig()
+        saveStoredConfig(
+            current.copy(
+                accCols = cols.coerceIn(3, 8),
+                accRows = rows.coerceIn(3, 8)
+            )
+        )
+    }
+
+    private fun loadStoredConfig(): StoredGridConfig {
+        val serialized = prefs.getString(KEY_STORED_GRID_CONFIG, null)
+        if (!serialized.isNullOrBlank()) {
+            val decoded = runCatching { json.decodeFromString<StoredGridConfig>(serialized) }.getOrNull()
+            if (decoded != null) {
+                return decoded
+            }
+        }
+
+        val hasLegacyKeys = prefs.contains(KEY_USER_COLS) ||
+            prefs.contains(KEY_USER_ROWS) ||
+            prefs.contains(KEY_ACC_COLS) ||
+            prefs.contains(KEY_ACC_ROWS)
+
+        if (hasLegacyKeys) {
+            val migrated = StoredGridConfig(
+                userCols = prefs.getInt(KEY_USER_COLS, -1).takeIf { it in 3..8 },
+                userRows = prefs.getInt(KEY_USER_ROWS, -1).takeIf { it in 3..8 },
+                accCols = prefs.getInt(KEY_ACC_COLS, -1).takeIf { it in 3..8 },
+                accRows = prefs.getInt(KEY_ACC_ROWS, -1).takeIf { it in 3..8 }
+            )
+            saveStoredConfig(migrated)
+            return migrated
+        }
+
+        return StoredGridConfig()
+    }
+
+    private fun saveStoredConfig(config: StoredGridConfig) {
+        prefs.edit {
+            putString(KEY_STORED_GRID_CONFIG, json.encodeToString(config))
+            remove(KEY_USER_COLS)
+            remove(KEY_USER_ROWS)
+            remove(KEY_ACC_COLS)
+            remove(KEY_ACC_ROWS)
+        }
     }
 
     private fun queryLauncherProvider(launcherPkg: String): Pair<Int, Int>? {
         val providerUri = when (launcherPkg) {
-            "com.teslacoilsw.launcher" -> Uri.parse("content://com.teslacoilsw.launcher.settings/grid")
-            "app.lawnchair" -> Uri.parse("content://app.lawnchair.settings/grid")
+            "com.teslacoilsw.launcher" -> "content://com.teslacoilsw.launcher.settings/grid".toUri()
+            "app.lawnchair" -> "content://app.lawnchair.settings/grid".toUri()
             else -> return null
         }
 
@@ -128,6 +188,7 @@ class LauncherGridDetector(private val context: Context) {
 
     companion object {
         private const val PREFS_NAME = "icon_sync_grid_prefs"
+        private const val KEY_STORED_GRID_CONFIG = "stored_grid_config"
         private const val KEY_USER_COLS = "user_grid_cols"
         private const val KEY_USER_ROWS = "user_grid_rows"
         private const val KEY_ACC_COLS = "acc_grid_cols"

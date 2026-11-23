@@ -18,6 +18,9 @@ export function CompanionView() {
   const activeFile = ANDROID_COMPANION_FILES[selectedFileIndex];
 
   const handleCopy = async () => {
+    if (!navigator.clipboard?.writeText) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(activeFile.content);
       setCopied(true);
@@ -36,10 +39,11 @@ export function CompanionView() {
     const a = document.createElement('a');
     a.href = url;
     a.download = activeFile.filename;
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (

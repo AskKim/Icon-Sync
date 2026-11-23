@@ -3,6 +3,8 @@ package com.iconsync.android.service
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
+import android.os.Build
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.iconsync.android.grid.LauncherGridDetector
@@ -14,18 +16,29 @@ import kotlin.math.roundToInt
  */
 class LauncherGridAccessibilityService : AccessibilityService() {
 
+    private var lastProcessedTimestampMs: Long = 0L
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val root = rootInActiveWindow ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastProcessedTimestampMs < DEBOUNCE_INTERVAL_MS) return
+
         val pkg = event?.packageName?.toString().orEmpty()
         val detector = LauncherGridDetector(this)
         if (pkg != detector.detectActiveLauncherPackage()) return
 
-        val distinctXs = mutableSetOf<Int>()
-        val distinctYs = mutableSetOf<Int>()
-        collectShortcutCells(root, distinctXs, distinctYs)
+        val root = rootInActiveWindow ?: return
+        lastProcessedTimestampMs = now
 
-        if (distinctXs.size in 3..8 && distinctYs.size in 3..8) {
-            detector.saveAccessibilityDetectedGrid(distinctXs.size, distinctYs.size)
+        try {
+            val distinctXs = mutableSetOf<Int>()
+            val distinctYs = mutableSetOf<Int>()
+            collectShortcutCells(root, distinctXs, distinctYs, depth = 0)
+
+            if (distinctXs.size in 3..8 && distinctYs.size in 3..8) {
+                detector.saveAccessibilityDetectedGrid(distinctXs.size, distinctYs.size)
+            }
+        } finally {
+            recycleNodeCompat(root)
         }
     }
 
@@ -36,8 +49,11 @@ class LauncherGridAccessibilityService : AccessibilityService() {
     private fun collectShortcutCells(
         node: AccessibilityNodeInfo,
         xs: MutableSet<Int>,
-        ys: MutableSet<Int>
+        ys: MutableSet<Int>,
+        depth: Int
     ) {
+        if (depth > MAX_TREE_DEPTH) return
+
         if (node.isClickable && !node.text.isNullOrBlank()) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
@@ -47,10 +63,28 @@ class LauncherGridAccessibilityService : AccessibilityService() {
                 ys += (rect.centerY() / 60.0).roundToInt()
             }
         }
+
+        if (depth == MAX_TREE_DEPTH) return
+
         for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { child ->
-                collectShortcutCells(child, xs, ys)
+            val child = node.getChild(i) ?: continue
+            try {
+                collectShortcutCells(child, xs, ys, depth + 1)
+            } finally {
+                recycleNodeCompat(child)
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun recycleNodeCompat(node: AccessibilityNodeInfo) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            node.recycle()
+        }
+    }
+
+    companion object {
+        private const val DEBOUNCE_INTERVAL_MS = 250L
+        private const val MAX_TREE_DEPTH = 12
     }
 }

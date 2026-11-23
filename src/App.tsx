@@ -1956,7 +1956,7 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F6F7F9] text-[#111827] pb-16 md:pb-0">
+    <div className="min-h-dvh flex flex-col bg-[#F6F7F9] text-[#111827] pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
       {/* Top Bar Contract: 3 zones, gap-8, single-line wordmark + 5 concise nav links + 1 primary CTA */}
       <header className="sticky top-0 z-30 h-14 bg-white/95 backdrop-blur-md border-b border-[#E4E7EC]">
         <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-8">
@@ -2319,7 +2319,7 @@ export default function App() {
       {/* Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-30 h-14 bg-white/95 backdrop-blur-md border-t border-[#E4E7EC] grid grid-cols-5"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-30 min-h-14 pb-[env(safe-area-inset-bottom)] bg-white/95 backdrop-blur-md border-t border-[#E4E7EC] grid grid-cols-5"
       >
         {navItems.map((item) => {
           const Icon = item.icon;

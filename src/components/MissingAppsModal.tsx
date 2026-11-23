@@ -8,7 +8,7 @@
  * but missing from the target Android phone, using strictly validated Play Store URLs.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   ChevronLeft,
@@ -45,8 +45,19 @@ export function MissingAppsModal({
   onDownloadFile,
   onClose,
 }: MissingAppsModalProps) {
+  const titleId = useId();
   const [viewMode, setViewMode] = useState<'walkthrough' | 'list'>(initialView);
   const [stepIndex, setStepIndex] = useState(0);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const installedSet = useMemo(() => new Set(installedPackages), [installedPackages]);
   const completedCount = useMemo(
@@ -75,12 +86,15 @@ export function MissingAppsModal({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="w-full max-w-2xl bg-white border border-[#E4E7EC] rounded-2xl shadow-xl overflow-hidden my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-4 border-b border-[#F1F3F6] flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-[#111827]">
+            <h2 id={titleId} className="text-base font-semibold text-[#111827]">
               Missing Apps on {targetDeviceName}
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
@@ -97,7 +111,7 @@ export function MissingAppsModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+        <div className="p-6 space-y-5 max-h-[80dvh] overflow-y-auto">
           {/* Progress + View Switcher */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-1 p-1 bg-[#F3F4F6] rounded-lg w-fit">

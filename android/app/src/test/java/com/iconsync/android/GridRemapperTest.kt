@@ -115,6 +115,26 @@ class GridRemapperTest {
     }
 
     @Test
+    fun preservePagesSpillsIntoContinuationPages() {
+        val source = listOf(buildDenseSixBySixPage())
+        val result = GridRemapper.remapPages(
+            sourcePages = source,
+            sourceCols = 6,
+            sourceRows = 6,
+            targetCols = 5,
+            targetRows = 4,
+            strategy = GridAdaptationStrategy.PRESERVE_PAGES
+        )
+
+        assertEquals(24, result.screens.sumOf { it.icons.size })
+        assertEquals(1, result.screens.sumOf { it.widgets.size })
+        assertEquals(0, result.droppedByCrop)
+        assertEquals(1, result.overflowPagesAdded)
+        assertEquals(2, result.screens.size)
+        assertTrue(result.screens[1].name.contains("(Cont.)"))
+    }
+
+    @Test
     fun resizeTargetGridMatchesSource6x6OneToOne() {
         val source = listOf(buildDenseSixBySixPage())
         val result = GridRemapper.remapPages(

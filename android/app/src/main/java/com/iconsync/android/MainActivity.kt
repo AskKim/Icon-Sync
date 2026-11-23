@@ -4,8 +4,13 @@ package com.iconsync.android
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.iconsync.android.grid.LauncherGridDetector
 import com.iconsync.android.model.HomeScreenPage
 import com.iconsync.android.service.LauncherBackupService
@@ -22,14 +27,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         detector = LauncherGridDetector(this)
         backupService = LauncherBackupService(this)
 
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (supportFragmentManager.backStackEntryCount > 0) {
+                        supportFragmentManager.popBackStack()
+                    } else {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            }
+        )
+
+        val basePad = (24 * resources.displayMetrics.density).toInt()
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            val pad = (24 * resources.displayMetrics.density).toInt()
-            setPadding(pad, pad * 2, pad, pad)
+            setPadding(basePad, basePad, basePad, basePad)
         }
 
         val title = TextView(this).apply {
@@ -87,9 +107,38 @@ class MainActivity : AppCompatActivity() {
         container.addView(btnReport5x4)
         container.addView(btnReport6x6)
         container.addView(btnExport)
-        setContentView(container)
 
-        refreshStatus()
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = true
+            addView(container)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(scrollView) { _, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            container.setPadding(
+                basePad + insets.left,
+                basePad + insets.top,
+                basePad + insets.right,
+                basePad + insets.bottom
+            )
+            windowInsets
+        }
+        setContentView(scrollView)
+
+        val restoredStatus = savedInstanceState?.getCharSequence(KEY_STATUS_TEXT)
+        if (!restoredStatus.isNullOrEmpty()) {
+            statusView.text = restoredStatus
+        } else {
+            refreshStatus()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::statusView.isInitialized) {
+            outState.putCharSequence(KEY_STATUS_TEXT, statusView.text)
+        }
     }
 
     private fun refreshStatus() {
@@ -100,5 +149,9 @@ class MainActivity : AppCompatActivity() {
             appendLine("Source: ${detected.source} (${detected.confidence})")
             append(detected.message)
         }
+    }
+
+    companion object {
+        private const val KEY_STATUS_TEXT = "status_text"
     }
 }

@@ -1,15 +1,14 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
-    base
 }
 
-val appVersionName = "0.1.0-alpha.1"
-val appVersionCode = 1
+val appVersionName = "2.3.0"
+val appVersionCode = 230
 
 android {
     namespace = "com.iconsync.android"
@@ -79,18 +78,19 @@ android {
     }
 }
 
+base {
+    archivesName.set("IconSync-v$appVersionName")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
-base {
-    archivesName.set("IconSync-v$appVersionName")
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

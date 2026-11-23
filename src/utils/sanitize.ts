@@ -185,10 +185,9 @@ export function sanitizeIconArtDataUri(value: unknown): string | undefined {
   if (/^data:image\/svg\+xml(;charset=utf-8)?;base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
     try {
       const b64 = trimmed.split(',')[1] ?? '';
-      const decoded =
-        typeof atob === 'function'
-          ? atob(b64)
-          : Buffer.from(b64, 'base64').toString('utf-8');
+      const binary = globalThis.atob(b64);
+      const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
       if (/<script|on\w+\s*=|javascript:|<foreignObject/i.test(decoded)) {
         return undefined;
       }

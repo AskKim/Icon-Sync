@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { Cloud, Download, HardDrive, Image as ImageIcon, X } from 'lucide-react';
 import { DeviceProfile } from '../types/layout';
 import {
@@ -22,6 +22,7 @@ export function BackupExportModal({
   onClose,
   onConfirmExport,
 }: BackupExportModalProps) {
+  const titleId = useId();
   const defaultName = `${device.name} — ${new Date().toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -30,6 +31,16 @@ export function BackupExportModal({
   const [notes, setNotes] = useState('');
   const [destination, setDestination] = useState<'cloud' | 'local' | 'both'>('both');
   const [includeIconArt, setIncludeIconArt] = useState<boolean>(true);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const stats = useMemo(
     () => computeBackupStats(device.screens, device.dock),
@@ -53,16 +64,19 @@ export function BackupExportModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#111827]/45 backdrop-blur-xs flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[#111827]/45 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg bg-white border border-[#E4E7EC] rounded-2xl shadow-xl overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-full max-w-lg bg-white border border-[#E4E7EC] rounded-2xl shadow-xl overflow-hidden my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-4 border-b border-[#F1F3F6] flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-[#111827]">
+            <h2 id={titleId} className="text-base font-semibold text-[#111827]">
               Save & Export Home Screen Layout
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
@@ -79,7 +93,7 @@ export function BackupExportModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[85dvh] overflow-y-auto">
           {/* Capture summary strip */}
           <div className="grid grid-cols-4 gap-3 py-3 px-4 rounded-xl bg-[#F9FAFB] border border-[#E4E7EC] text-center">
             <div>

@@ -17,6 +17,69 @@ export const ANDROID_COMPANION_FILES: CompanionSourceFile[] = [
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class GridDetectionSource {
+    LAUNCHER_PROVIDER,
+    AUTO_ACCESSIBILITY,
+    USER_REPORTED,
+    BACKUP_METADATA,
+    FALLBACK_HEURISTIC
+}
+
+@Serializable
+enum class GridAdaptationStrategy {
+    AUTO_REFLOW,
+    PROPORTIONAL_SCALE,
+    PRESERVE_PAGES,
+    RESIZE_TARGET_GRID,
+    CROP_WITHIN_BOUNDS
+}
+
+@Serializable
+data class IconPlacement(
+    val id: String,
+    val packageName: String,
+    val label: String,
+    val col: Int,
+    val row: Int,
+    val isPlaceholder: Boolean = false,
+    val customIconArt: String? = null
+)
+
+@Serializable
+data class FolderPlacement(
+    val id: String,
+    val name: String,
+    val col: Int,
+    val row: Int,
+    val apps: List<IconPlacement> = emptyList()
+)
+
+@Serializable
+data class WidgetPlacement(
+    val id: String,
+    val syncKey: String,
+    val provider: String,
+    val title: String,
+    val col: Int,
+    val row: Int,
+    val spanX: Int,
+    val spanY: Int,
+    val syncEnabled: Boolean = true,
+    val updatedAt: String = ""
+)
+
+@Serializable
+data class HomeScreenPage(
+    val id: String,
+    val name: String,
+    val isPrimary: Boolean,
+    val order: Int,
+    val icons: List<IconPlacement> = emptyList(),
+    val folders: List<FolderPlacement> = emptyList(),
+    val widgets: List<WidgetPlacement> = emptyList()
+)
+
+@Serializable
 data class IconArtEntry(
     val packageName: String,
     val label: String,
@@ -29,167 +92,229 @@ data class IconArtEntry(
 data class LayoutBackupSnapshot(
     val id: String,
     val name: String,
-    val notes: String = "",
     val schemaVersion: String = "2.0",
     val createdAt: String,
-    val sourceDeviceId: String,
     val sourceDeviceName: String,
     val sourceLauncher: String,
     val gridCols: Int,
     val gridRows: Int,
-    val gridDetectionSource: String = "auto-accessibility",
+    val gridDetectionSource: GridDetectionSource = GridDetectionSource.AUTO_ACCESSIBILITY,
     val includesIconArt: Boolean = false,
     val iconArtAssets: Map<String, IconArtEntry>? = null,
     val screens: List<HomeScreenPage>,
-    val dock: List<AppIconItem>,
-    val checksum: String
+    val checksum: String = ""
 )
 
 @Serializable
-data class HomeScreenPage(
-    val id: String,
-    val name: String,
-    val isPrimary: Boolean,
-    val order: Int,
-    val icons: List<AppIconItem>,
-    val folders: List<FolderItem>,
-    val widgets: List<WidgetItem>
-)
-
-@Serializable
-data class AppIconItem(
-    val id: String,
-    val packageName: String,
-    val label: String,
-    val col: Int = 0,
-    val row: Int = 0,
-    val isPlaceholder: Boolean = false,
-    val customIconArt: String? = null
-)
-
-@Serializable
-data class FolderItem(
-    val id: String,
-    val name: String,
-    val col: Int,
-    val row: Int,
-    val apps: List<AppIconItem>
-)
-
-@Serializable
-data class WidgetItem(
-    val id: String,
-    val syncKey: String,
-    val provider: String,
-    val title: String,
-    val col: Int,
-    val row: Int,
-    val spanX: Int,
-    val spanY: Int,
-    val syncEnabled: Boolean,
-    val updatedAt: String,
-    val configJson: String
-)
-
-enum class RestoreMode { REPLACE, MERGE }
-
-enum class GridAdaptationStrategy {
-    AUTO_REFLOW,
-    PROPORTIONAL_SCALE,
-    PRESERVE_PAGES,
-    RESIZE_TARGET_GRID,
-    CROP_WITHIN_BOUNDS
-}`,
+data class DetectedLauncherGrid(
+    val launcherPackage: String,
+    val cols: Int,
+    val rows: Int,
+    val source: GridDetectionSource,
+    val confidence: String,
+    val message: String
+)`,
   },
   {
     filename: 'LauncherGridDetector.kt',
     path: 'android/app/src/main/java/com/iconsync/android/grid/LauncherGridDetector.kt',
     language: 'kotlin',
-    summary: 'Auto-detects active launcher grid dimensions (4×5, 4×6, 5×4, 6×6, etc.) via launcher metadata, Accessibility bounds, or OEM profile, with manual reporting fallback.',
+    summary: 'Auto-detects active launcher grid dimensions (4×5, 4×6, 5×4, 6×6, etc.) via launcher ContentProviders, Accessibility bounds, or user-reported SharedPreferences fallback.',
     content: `package com.iconsync.android.grid
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.edit
+import androidx.core.net.toUri
+import com.iconsync.android.model.DetectedLauncherGrid
+import com.iconsync.android.model.GridDetectionSource
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
-data class DetectedGrid(
-    val cols: Int,
-    val rows: Int,
-    val launcherPackage: String,
-    val source: String, // "launcher-provider" | "auto-accessibility" | "oem-profile" | "user-reported"
-    val confidence: String // "verified" | "estimated" | "manual"
+@Serializable
+data class StoredGridConfig(
+    val userCols: Int? = null,
+    val userRows: Int? = null,
+    val accCols: Int? = null,
+    val accRows: Int? = null
 )
 
+/**
+ * Resolves the active Android launcher's home-screen grid dimensions (cols x rows).
+ *
+ * Tier 1: Query known launcher ContentProviders (Nova, Lawnchair, Pixel/Launcher3) when permitted.
+ * Tier 2: Read latest cached bounds from opt-in LauncherGridAccessibilityService.
+ * Tier 3: Fall back to user-reported custom grid stored in SharedPreferences (ideal for Mini/Minimalist launchers).
+ */
 class LauncherGridDetector(private val context: Context) {
 
-    fun resolveDefaultLauncherPackage(): String {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        return context.packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
-            ?: "com.android.launcher3"
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
     }
 
-    /**
-     * Auto-detects the active launcher's grid dimensions.
-     * Falls back to user-reported dimensions for minimalist/custom launchers that hide workspace bounds.
-     */
-    fun detectGrid(
-        observedMaxCol: Int = 0,
-        observedMaxRow: Int = 0,
-        userReportedGrid: Pair<Int, Int>? = null
-    ): DetectedGrid {
-        val pkg = resolveDefaultLauncherPackage()
+    fun detectActiveLauncherPackage(): String {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.resolveActivity(
+                intent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.resolveActivity(
+                intent,
+                PackageManager.MATCH_DEFAULT_ONLY
+            )
+        }
+        return resolved?.activityInfo?.packageName ?: "unknown.launcher"
+    }
 
-        if (userReportedGrid != null) {
-            return DetectedGrid(
-                cols = userReportedGrid.first.coerceIn(3, 8),
-                rows = userReportedGrid.second.coerceIn(3, 8),
-                launcherPackage = pkg,
-                source = "user-reported",
-                confidence = "manual"
+    fun detectGrid(): DetectedLauncherGrid {
+        val launcherPkg = detectActiveLauncherPackage()
+        val storedConfig = loadStoredConfig()
+
+        // Tier 1: Query launcher provider if exposed (e.g., Nova / Lawnchair)
+        queryLauncherProvider(launcherPkg)?.let { (cols, rows) ->
+            return DetectedLauncherGrid(
+                launcherPackage = launcherPkg,
+                cols = cols.coerceIn(3, 8),
+                rows = rows.coerceIn(3, 8),
+                source = GridDetectionSource.LAUNCHER_PROVIDER,
+                confidence = "verified",
+                message = "Queried $launcherPkg grid provider directly (\${cols}x$rows)."
             )
         }
 
-        // 1. Third-party launchers exposing provider/backup dimensions (Nova, Lawnchair)
-        if (pkg.contains("teslacoilsw") || pkg.contains("lawnchair")) {
-            val cols = maxOf(5, observedMaxCol).coerceIn(3, 8)
-            val rows = maxOf(5, observedMaxRow).coerceIn(3, 8)
-            return DetectedGrid(cols, rows, pkg, "launcher-provider", "verified")
-        }
-
-        // 2. Samsung One UI Home (Galaxy A15 / A16 default 4x6, S-series 5x6)
-        if (pkg.contains("sec.android.app.launcher")) {
-            val model = Build.MODEL.uppercase()
-            val (defaultCols, defaultRows) = when {
-                model.startsWith("SM-A15") || model.startsWith("SM-A16") -> 4 to 6
-                model.startsWith("SM-S9") -> 5 to 6
-                else -> 4 to 5
-            }
-            return DetectedGrid(
-                cols = maxOf(defaultCols, observedMaxCol).coerceIn(4, 7),
-                rows = maxOf(defaultRows, observedMaxRow).coerceIn(5, 7),
-                launcherPackage = pkg,
-                source = if (observedMaxCol > 0) "auto-accessibility" else "oem-profile",
-                confidence = "verified"
+        // Tier 2: Check AccessibilityService workspace cache
+        val accCols = storedConfig.accCols
+        val accRows = storedConfig.accRows
+        if (accCols != null && accRows != null && accCols in 3..8 && accRows in 3..8) {
+            return DetectedLauncherGrid(
+                launcherPackage = launcherPkg,
+                cols = accCols,
+                rows = accRows,
+                source = GridDetectionSource.AUTO_ACCESSIBILITY,
+                confidence = "verified",
+                message = "Detected via Accessibility workspace bounds (\${accCols}x$accRows)."
             )
         }
 
-        // 3. Google Pixel Launcher
-        if (pkg.contains("nexuslauncher")) {
-            val cols = maxOf(4, observedMaxCol).coerceIn(4, 5)
-            val rows = maxOf(5, observedMaxRow).coerceIn(4, 6)
-            return DetectedGrid(cols, rows, pkg, "auto-accessibility", "verified")
+        // Tier 3: User-reported custom grid (required for private Mini/Minimalist launchers)
+        val userCols = storedConfig.userCols
+        val userRows = storedConfig.userRows
+        if (userCols != null && userRows != null && userCols in 3..8 && userRows in 3..8) {
+            return DetectedLauncherGrid(
+                launcherPackage = launcherPkg,
+                cols = userCols,
+                rows = userRows,
+                source = GridDetectionSource.USER_REPORTED,
+                confidence = "manual",
+                message = "Using user-reported grid configuration (\${userCols}x$userRows)."
+            )
         }
 
-        // 4. Minimalist / unknown custom launcher — estimate from observed items or request manual report
-        val fallbackCols = if (observedMaxCol >= 3) observedMaxCol.coerceIn(3, 8) else 4
-        val fallbackRows = if (observedMaxRow >= 3) observedMaxRow.coerceIn(3, 8) else 5
-        return DetectedGrid(
-            cols = fallbackCols,
-            rows = fallbackRows,
-            launcherPackage = pkg,
-            source = "oem-profile",
-            confidence = "estimated"
+        // Safe default heuristic when launcher blocks introspection and user hasn't reported yet
+        return DetectedLauncherGrid(
+            launcherPackage = launcherPkg,
+            cols = 4,
+            rows = 5,
+            source = GridDetectionSource.FALLBACK_HEURISTIC,
+            confidence = "estimated",
+            message = "$launcherPkg did not expose grid dimensions. Report your grid manually in Icon Sync."
         )
+    }
+
+    fun saveUserReportedGrid(cols: Int, rows: Int) {
+        val current = loadStoredConfig()
+        saveStoredConfig(
+            current.copy(
+                userCols = cols.coerceIn(3, 8),
+                userRows = rows.coerceIn(3, 8)
+            )
+        )
+    }
+
+    fun saveAccessibilityDetectedGrid(cols: Int, rows: Int) {
+        val current = loadStoredConfig()
+        saveStoredConfig(
+            current.copy(
+                accCols = cols.coerceIn(3, 8),
+                accRows = rows.coerceIn(3, 8)
+            )
+        )
+    }
+
+    private fun loadStoredConfig(): StoredGridConfig {
+        val serialized = prefs.getString(KEY_STORED_GRID_CONFIG, null)
+        if (!serialized.isNullOrBlank()) {
+            val decoded = runCatching { json.decodeFromString<StoredGridConfig>(serialized) }.getOrNull()
+            if (decoded != null) {
+                return decoded
+            }
+        }
+
+        val hasLegacyKeys = prefs.contains(KEY_USER_COLS) ||
+            prefs.contains(KEY_USER_ROWS) ||
+            prefs.contains(KEY_ACC_COLS) ||
+            prefs.contains(KEY_ACC_ROWS)
+
+        if (hasLegacyKeys) {
+            val migrated = StoredGridConfig(
+                userCols = prefs.getInt(KEY_USER_COLS, -1).takeIf { it in 3..8 },
+                userRows = prefs.getInt(KEY_USER_ROWS, -1).takeIf { it in 3..8 },
+                accCols = prefs.getInt(KEY_ACC_COLS, -1).takeIf { it in 3..8 },
+                accRows = prefs.getInt(KEY_ACC_ROWS, -1).takeIf { it in 3..8 }
+            )
+            saveStoredConfig(migrated)
+            return migrated
+        }
+
+        return StoredGridConfig()
+    }
+
+    private fun saveStoredConfig(config: StoredGridConfig) {
+        prefs.edit {
+            putString(KEY_STORED_GRID_CONFIG, json.encodeToString(config))
+            remove(KEY_USER_COLS)
+            remove(KEY_USER_ROWS)
+            remove(KEY_ACC_COLS)
+            remove(KEY_ACC_ROWS)
+        }
+    }
+
+    private fun queryLauncherProvider(launcherPkg: String): Pair<Int, Int>? {
+        val providerUri = when (launcherPkg) {
+            "com.teslacoilsw.launcher" -> "content://com.teslacoilsw.launcher.settings/grid".toUri()
+            "app.lawnchair" -> "content://app.lawnchair.settings/grid".toUri()
+            else -> return null
+        }
+
+        return runCatching {
+            context.contentResolver.query(providerUri, arrayOf("cols", "rows"), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val cols = cursor.getInt(0)
+                        val rows = cursor.getInt(1)
+                        if (cols in 3..8 && rows in 3..8) Pair(cols, rows) else null
+                    } else {
+                        null
+                    }
+                }
+        }.getOrNull()
+    }
+
+    companion object {
+        private const val PREFS_NAME = "icon_sync_grid_prefs"
+        private const val KEY_STORED_GRID_CONFIG = "stored_grid_config"
+        private const val KEY_USER_COLS = "user_grid_cols"
+        private const val KEY_USER_ROWS = "user_grid_rows"
+        private const val KEY_ACC_COLS = "acc_grid_cols"
+        private const val KEY_ACC_ROWS = "acc_grid_rows"
     }
 }`,
   },
@@ -200,188 +325,416 @@ class LauncherGridDetector(private val context: Context) {
     summary: 'Adapts layouts across mismatched grids (e.g., 6×6 into 5×4) using Auto-Reflow, Proportional Spatial Scaling, Page-Locked Split, Target Resize, or Strict Bounds Crop.',
     content: `package com.iconsync.android.grid
 
-import com.iconsync.android.model.*
+import com.iconsync.android.model.FolderPlacement
+import com.iconsync.android.model.GridAdaptationStrategy
+import com.iconsync.android.model.HomeScreenPage
+import com.iconsync.android.model.IconPlacement
+import com.iconsync.android.model.WidgetPlacement
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-data class RemapSummary(
-    val pages: List<HomeScreenPage>,
+data class RemapResult(
+    val screens: List<HomeScreenPage>,
+    val targetCols: Int,
+    val targetRows: Int,
+    val relocatedCount: Int,
     val widgetsResized: Int,
-    val itemsRelocated: Int,
-    val overflowPagesCreated: Int,
-    val itemsCropped: Int
+    val droppedByCrop: Int,
+    val overflowPagesAdded: Int
 )
 
+/**
+ * Pure Kotlin cross-grid layout remapper matching Icon Sync Web Studio's 5 adaptation strategies.
+ * Handles arbitrary source -> target grid mismatches such as 6x6 -> 5x4 or 5x6 -> 4x5.
+ */
 object GridRemapper {
-
-    fun scaleCoordinate(coord: Int, srcMax: Int, dstMax: Int, span: Int = 1): Int {
-        val usableDst = (dstMax - span).coerceAtLeast(0)
-        if (srcMax <= 1 || usableDst == 0) return 0
-        val ratio = coord.toDouble() / (srcMax - 1).coerceAtLeast(1).toDouble()
-        return (ratio * usableDst).roundToInt().coerceIn(0, usableDst)
-    }
 
     fun remapPages(
         sourcePages: List<HomeScreenPage>,
+        sourceCols: Int,
+        sourceRows: Int,
+        targetCols: Int,
+        targetRows: Int,
+        strategy: GridAdaptationStrategy
+    ): RemapResult {
+        val effectiveCols = if (strategy == GridAdaptationStrategy.RESIZE_TARGET_GRID) sourceCols else targetCols
+        val effectiveRows = if (strategy == GridAdaptationStrategy.RESIZE_TARGET_GRID) sourceRows else targetRows
+
+        var relocatedCount = 0
+        var widgetsResized = 0
+        var droppedByCrop = 0
+        var overflowPagesAdded = 0
+
+        val outputPages = mutableListOf<HomeScreenPage>()
+        val globalOverflowIcons = mutableListOf<IconPlacement>()
+        val globalOverflowFolders = mutableListOf<FolderPlacement>()
+        val globalOverflowWidgets = mutableListOf<WidgetPlacement>()
+
+        for (page in sourcePages) {
+            val grid = Array(effectiveRows) { BooleanArray(effectiveCols) }
+            val placedWidgets = mutableListOf<WidgetPlacement>()
+            val placedFolders = mutableListOf<FolderPlacement>()
+            val placedIcons = mutableListOf<IconPlacement>()
+
+            val pageOverflowWidgets = mutableListOf<WidgetPlacement>()
+            val pageOverflowFolders = mutableListOf<FolderPlacement>()
+            val pageOverflowIcons = mutableListOf<IconPlacement>()
+
+            // 1. Widgets first (largest contiguous footprints)
+            for (w in page.widgets) {
+                val clampedSpanX = w.spanX.coerceAtMost(effectiveCols)
+                val clampedSpanY = w.spanY.coerceAtMost(effectiveRows)
+                if (clampedSpanX != w.spanX || clampedSpanY != w.spanY) widgetsResized++
+
+                val preferred = computePreferredSlot(
+                    col = w.col,
+                    row = w.row,
+                    spanX = clampedSpanX,
+                    spanY = clampedSpanY,
+                    srcCols = sourceCols,
+                    srcRows = sourceRows,
+                    dstCols = effectiveCols,
+                    dstRows = effectiveRows,
+                    strategy = strategy
+                )
+
+                if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS) {
+                    if (w.col >= 0 &&
+                        w.row >= 0 &&
+                        w.col + clampedSpanX <= effectiveCols &&
+                        w.row + clampedSpanY <= effectiveRows &&
+                        canPlace(grid, w.col, w.row, clampedSpanX, clampedSpanY, effectiveCols, effectiveRows)
+                    ) {
+                        mark(grid, w.col, w.row, clampedSpanX, clampedSpanY)
+                        placedWidgets += w.copy(spanX = clampedSpanX, spanY = clampedSpanY)
+                    } else {
+                        droppedByCrop++
+                    }
+                    continue
+                }
+
+                val slot = when {
+                    preferred != null && canPlace(grid, preferred.first, preferred.second, clampedSpanX, clampedSpanY, effectiveCols, effectiveRows) -> preferred
+                    strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE && preferred != null ->
+                        findNearestSlot(grid, preferred.first, preferred.second, clampedSpanX, clampedSpanY, effectiveCols, effectiveRows)
+                    else -> findFirstSlot(grid, clampedSpanX, clampedSpanY, effectiveCols, effectiveRows)
+                }
+
+                if (slot != null) {
+                    if (slot.first != w.col || slot.second != w.row) relocatedCount++
+                    mark(grid, slot.first, slot.second, clampedSpanX, clampedSpanY)
+                    placedWidgets += w.copy(col = slot.first, row = slot.second, spanX = clampedSpanX, spanY = clampedSpanY)
+                } else {
+                    relocatedCount++
+                    val resized = w.copy(spanX = clampedSpanX, spanY = clampedSpanY)
+                    if (strategy == GridAdaptationStrategy.PRESERVE_PAGES) {
+                        pageOverflowWidgets += resized
+                    } else {
+                        globalOverflowWidgets += resized
+                    }
+                }
+            }
+
+            // 2. Folders
+            for (f in page.folders) {
+                if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS) {
+                    if (f.col in 0 until effectiveCols && f.row in 0 until effectiveRows && !grid[f.row][f.col]) {
+                        grid[f.row][f.col] = true
+                        placedFolders += f
+                    } else {
+                        droppedByCrop++
+                    }
+                    continue
+                }
+
+                val preferred = computePreferredSlot(f.col, f.row, 1, 1, sourceCols, sourceRows, effectiveCols, effectiveRows, strategy)
+                val slot = when {
+                    preferred != null && canPlace(grid, preferred.first, preferred.second, 1, 1, effectiveCols, effectiveRows) -> preferred
+                    strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE && preferred != null ->
+                        findNearestSlot(grid, preferred.first, preferred.second, 1, 1, effectiveCols, effectiveRows)
+                    else -> findFirstSlot(grid, 1, 1, effectiveCols, effectiveRows)
+                }
+
+                if (slot != null) {
+                    if (slot.first != f.col || slot.second != f.row) relocatedCount++
+                    grid[slot.second][slot.first] = true
+                    placedFolders += f.copy(col = slot.first, row = slot.second)
+                } else {
+                    relocatedCount++
+                    if (strategy == GridAdaptationStrategy.PRESERVE_PAGES) {
+                        pageOverflowFolders += f
+                    } else {
+                        globalOverflowFolders += f
+                    }
+                }
+            }
+
+            // 3. Icons
+            for (ic in page.icons) {
+                if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS) {
+                    if (ic.col in 0 until effectiveCols && ic.row in 0 until effectiveRows && !grid[ic.row][ic.col]) {
+                        grid[ic.row][ic.col] = true
+                        placedIcons += ic
+                    } else {
+                        droppedByCrop++
+                    }
+                    continue
+                }
+
+                val preferred = computePreferredSlot(ic.col, ic.row, 1, 1, sourceCols, sourceRows, effectiveCols, effectiveRows, strategy)
+                val slot = when {
+                    preferred != null && canPlace(grid, preferred.first, preferred.second, 1, 1, effectiveCols, effectiveRows) -> preferred
+                    strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE && preferred != null ->
+                        findNearestSlot(grid, preferred.first, preferred.second, 1, 1, effectiveCols, effectiveRows)
+                    else -> findFirstSlot(grid, 1, 1, effectiveCols, effectiveRows)
+                }
+
+                if (slot != null) {
+                    if (slot.first != ic.col || slot.second != ic.row) relocatedCount++
+                    grid[slot.second][slot.first] = true
+                    placedIcons += ic.copy(col = slot.first, row = slot.second)
+                } else {
+                    relocatedCount++
+                    if (strategy == GridAdaptationStrategy.PRESERVE_PAGES) {
+                        pageOverflowIcons += ic
+                    } else {
+                        globalOverflowIcons += ic
+                    }
+                }
+            }
+
+            outputPages += page.copy(
+                order = outputPages.size,
+                isPrimary = outputPages.isEmpty(),
+                icons = placedIcons,
+                folders = placedFolders,
+                widgets = placedWidgets
+            )
+
+            // Per-page split overflow for PRESERVE_PAGES
+            if (strategy == GridAdaptationStrategy.PRESERVE_PAGES &&
+                (pageOverflowWidgets.isNotEmpty() || pageOverflowFolders.isNotEmpty() || pageOverflowIcons.isNotEmpty())
+            ) {
+                val spilled = packOverflowPages(
+                    baseName = "\${page.name} (Cont.)",
+                    startOrder = outputPages.size,
+                    cols = effectiveCols,
+                    rows = effectiveRows,
+                    widgets = pageOverflowWidgets,
+                    folders = pageOverflowFolders,
+                    icons = pageOverflowIcons
+                )
+                overflowPagesAdded += spilled.size
+                outputPages += spilled
+            }
+        }
+
+        // Global overflow pages for AUTO_REFLOW / PROPORTIONAL_SCALE
+        if (globalOverflowWidgets.isNotEmpty() || globalOverflowFolders.isNotEmpty() || globalOverflowIcons.isNotEmpty()) {
+            val spilled = packOverflowPages(
+                baseName = "Grid Overflow",
+                startOrder = outputPages.size,
+                cols = effectiveCols,
+                rows = effectiveRows,
+                widgets = globalOverflowWidgets,
+                folders = globalOverflowFolders,
+                icons = globalOverflowIcons
+            )
+            overflowPagesAdded += spilled.size
+            outputPages += spilled
+        }
+
+        return RemapResult(
+            screens = outputPages,
+            targetCols = effectiveCols,
+            targetRows = effectiveRows,
+            relocatedCount = relocatedCount,
+            widgetsResized = widgetsResized,
+            droppedByCrop = droppedByCrop,
+            overflowPagesAdded = overflowPagesAdded
+        )
+    }
+
+    private fun packOverflowPages(
+        baseName: String,
+        startOrder: Int,
+        cols: Int,
+        rows: Int,
+        widgets: List<WidgetPlacement>,
+        folders: List<FolderPlacement>,
+        icons: List<IconPlacement>
+    ): List<HomeScreenPage> {
+        val pages = mutableListOf<HomeScreenPage>()
+        val grids = mutableListOf<Array<BooleanArray>>()
+        val widgetsPerPage = mutableListOf<MutableList<WidgetPlacement>>()
+        val foldersPerPage = mutableListOf<MutableList<FolderPlacement>>()
+        val iconsPerPage = mutableListOf<MutableList<IconPlacement>>()
+
+        fun addPage(): Int {
+            grids.add(Array(rows) { BooleanArray(cols) })
+            widgetsPerPage.add(mutableListOf())
+            foldersPerPage.add(mutableListOf())
+            iconsPerPage.add(mutableListOf())
+            return grids.lastIndex
+        }
+
+        for (w in widgets) {
+            var placed = false
+            for (i in grids.indices) {
+                val slot = findFirstSlot(grids[i], w.spanX, w.spanY, cols, rows)
+                if (slot != null) {
+                    mark(grids[i], slot.first, slot.second, w.spanX, w.spanY)
+                    widgetsPerPage[i] += w.copy(col = slot.first, row = slot.second)
+                    placed = true
+                    break
+                }
+            }
+            if (!placed) {
+                val idx = addPage()
+                mark(grids[idx], 0, 0, w.spanX, w.spanY)
+                widgetsPerPage[idx] += w.copy(col = 0, row = 0)
+            }
+        }
+
+        for (f in folders) {
+            var placed = false
+            for (i in grids.indices) {
+                val slot = findFirstSlot(grids[i], 1, 1, cols, rows)
+                if (slot != null) {
+                    grids[i][slot.second][slot.first] = true
+                    foldersPerPage[i] += f.copy(col = slot.first, row = slot.second)
+                    placed = true
+                    break
+                }
+            }
+            if (!placed) {
+                val idx = addPage()
+                grids[idx][0][0] = true
+                foldersPerPage[idx] += f.copy(col = 0, row = 0)
+            }
+        }
+
+        for (ic in icons) {
+            var placed = false
+            for (i in grids.indices) {
+                val slot = findFirstSlot(grids[i], 1, 1, cols, rows)
+                if (slot != null) {
+                    grids[i][slot.second][slot.first] = true
+                    iconsPerPage[i] += ic.copy(col = slot.first, row = slot.second)
+                    placed = true
+                    break
+                }
+            }
+            if (!placed) {
+                val idx = addPage()
+                grids[idx][0][0] = true
+                iconsPerPage[idx] += ic.copy(col = 0, row = 0)
+            }
+        }
+
+        for (i in grids.indices) {
+            val suffix = if (grids.size > 1) " \${i + 1}" else ""
+            pages += HomeScreenPage(
+                id = "overflow-\${startOrder + i}",
+                name = "$baseName$suffix",
+                isPrimary = false,
+                order = startOrder + i,
+                icons = iconsPerPage[i],
+                folders = foldersPerPage[i],
+                widgets = widgetsPerPage[i]
+            )
+        }
+        return pages
+    }
+
+    private fun computePreferredSlot(
+        col: Int,
+        row: Int,
+        spanX: Int,
+        spanY: Int,
         srcCols: Int,
         srcRows: Int,
         dstCols: Int,
         dstRows: Int,
         strategy: GridAdaptationStrategy
-    ): RemapSummary {
-        if (strategy == GridAdaptationStrategy.RESIZE_TARGET_GRID ||
-            (srcCols == dstCols && srcRows == dstRows)
-        ) {
-            return RemapSummary(sourcePages, 0, 0, 0, 0)
+    ): Pair<Int, Int>? {
+        if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) {
+            val scaledCol = scaleCoord(col, srcCols, dstCols).coerceAtMost((dstCols - spanX).coerceAtLeast(0))
+            val scaledRow = scaleCoord(row, srcRows, dstRows).coerceAtMost((dstRows - spanY).coerceAtLeast(0))
+            return Pair(scaledCol, scaledRow)
         }
-
-        val resultPages = mutableListOf<HomeScreenPage>()
-        var widgetsResized = 0
-        var itemsRelocated = 0
-        var overflowPages = 0
-        var itemsCropped = 0
-
-        for ((idx, srcPage) in sourcePages.withIndex()) {
-            val occupied = Array(dstRows) { BooleanArray(dstCols) }
-            val placedWidgets = mutableListOf<WidgetItem>()
-            val placedFolders = mutableListOf<FolderItem>()
-            val placedIcons = mutableListOf<AppIconItem>()
-            val overflowIcons = mutableListOf<AppIconItem>()
-
-            // 1. Widgets first (clamp spans to target grid)
-            for (w in srcPage.widgets) {
-                val spanX = minOf(w.spanX, dstCols)
-                val spanY = minOf(w.spanY, dstRows)
-                if (spanX != w.spanX || spanY != w.spanY) widgetsResized++
-
-                val oob = w.col + spanX > dstCols || w.row + spanY > dstRows
-                if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS && oob) {
-                    itemsCropped++
-                    continue
-                }
-
-                val targetCol = if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) {
-                    scaleCoordinate(w.col, srcCols, dstCols, spanX)
-                } else w.col
-                val targetRow = if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) {
-                    scaleCoordinate(w.row, srcRows, dstRows, spanY)
-                } else w.row
-
-                val slot = findSlot(occupied, dstCols, dstRows, targetCol, targetRow, spanX, spanY)
-                if (slot != null) {
-                    mark(occupied, slot.first, slot.second, spanX, spanY)
-                    placedWidgets.add(w.copy(col = slot.first, row = slot.second, spanX = spanX, spanY = spanY))
-                    if (slot.first != w.col || slot.second != w.row) itemsRelocated++
-                }
-            }
-
-            // 2. Folders & Icons
-            for (f in srcPage.folders) {
-                val oob = f.col >= dstCols || f.row >= dstRows
-                if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS && oob) {
-                    itemsCropped++
-                    continue
-                }
-                val tc = if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) scaleCoordinate(f.col, srcCols, dstCols) else f.col
-                val tr = if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) scaleCoordinate(f.row, srcRows, dstRows) else f.row
-                val slot = findSlot(occupied, dstCols, dstRows, tc, tr, 1, 1)
-                if (slot != null) {
-                    mark(occupied, slot.first, slot.second, 1, 1)
-                    placedFolders.add(f.copy(col = slot.first, row = slot.second))
-                    if (slot.first != f.col || slot.second != f.row) itemsRelocated++
-                }
-            }
-
-            for (ic in srcPage.icons) {
-                val oob = ic.col >= dstCols || ic.row >= dstRows
-                if (strategy == GridAdaptationStrategy.CROP_WITHIN_BOUNDS && oob) {
-                    itemsCropped++
-                    continue
-                }
-                val tc = if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) scaleCoordinate(ic.col, srcCols, dstCols) else ic.col
-                val tr = if (strategy == GridAdaptationStrategy.PROPORTIONAL_SCALE) scaleCoordinate(ic.row, srcRows, dstRows) else ic.row
-                val slot = findSlot(occupied, dstCols, dstRows, tc, tr, 1, 1)
-                if (slot != null) {
-                    mark(occupied, slot.first, slot.second, 1, 1)
-                    placedIcons.add(ic.copy(col = slot.first, row = slot.second))
-                    if (slot.first != ic.col || slot.second != ic.row) itemsRelocated++
-                } else {
-                    overflowIcons.add(ic)
-                }
-            }
-
-            resultPages.add(
-                srcPage.copy(
-                    order = resultPages.size,
-                    isPrimary = idx == 0,
-                    widgets = placedWidgets,
-                    folders = placedFolders,
-                    icons = placedIcons
-                )
-            )
-
-            // Spill excess items to overflow page(s) so nothing is silently lost
-            var part = 2
-            while (overflowIcons.isNotEmpty()) {
-                overflowPages++
-                val ovGrid = Array(dstRows) { BooleanArray(dstCols) }
-                val ovIcons = mutableListOf<AppIconItem>()
-                val iter = overflowIcons.iterator()
-                while (iter.hasNext()) {
-                    val ic = iter.next()
-                    val slot = findSlot(ovGrid, dstCols, dstRows, 0, 0, 1, 1) ?: break
-                    mark(ovGrid, slot.first, slot.second, 1, 1)
-                    ovIcons.add(ic.copy(col = slot.first, row = slot.second))
-                    itemsRelocated++
-                    iter.remove()
-                }
-                resultPages.add(
-                    HomeScreenPage(
-                        id = "\${srcPage.id}-part-\$part",
-                        name = "\${srcPage.name} (Part \${part++})",
-                        isPrimary = false,
-                        order = resultPages.size,
-                        icons = ovIcons,
-                        folders = emptyList(),
-                        widgets = emptyList()
-                    )
-                )
-            }
+        return if (col in 0..(dstCols - spanX) && row in 0..(dstRows - spanY)) {
+            Pair(col, row)
+        } else {
+            null
         }
-
-        return RemapSummary(resultPages, widgetsResized, itemsRelocated, overflowPages, itemsCropped)
     }
 
-    private fun canFit(grid: Array<BooleanArray>, cols: Int, rows: Int, c: Int, r: Int, sx: Int, sy: Int): Boolean {
-        if (c < 0 || r < 0 || c + sx > cols || r + sy > rows) return false
-        for (yy in r until r + sy) for (xx in c until c + sx) if (grid[yy][xx]) return false
+    private fun scaleCoord(coord: Int, fromMax: Int, toMax: Int): Int {
+        if (fromMax <= 1 || toMax <= 1) return 0
+        val ratio = coord.toDouble() / (fromMax - 1).toDouble()
+        return (ratio * (toMax - 1)).roundToInt().coerceIn(0, toMax - 1)
+    }
+
+    private fun canPlace(
+        grid: Array<BooleanArray>,
+        col: Int,
+        row: Int,
+        spanX: Int,
+        spanY: Int,
+        cols: Int,
+        rows: Int
+    ): Boolean {
+        if (col < 0 || row < 0 || col + spanX > cols || row + spanY > rows) return false
+        for (r in row until row + spanY) {
+            for (c in col until col + spanX) {
+                if (grid[r][c]) return false
+            }
+        }
         return true
     }
 
-    private fun mark(grid: Array<BooleanArray>, c: Int, r: Int, sx: Int, sy: Int) {
-        for (yy in r until r + sy) for (xx in c until c + sx) grid[yy][xx] = true
+    private fun mark(grid: Array<BooleanArray>, col: Int, row: Int, spanX: Int, spanY: Int) {
+        for (r in row until row + spanY) {
+            for (c in col until col + spanX) {
+                grid[r][c] = true
+            }
+        }
     }
 
-    private fun findSlot(
+    private fun findFirstSlot(
         grid: Array<BooleanArray>,
+        spanX: Int,
+        spanY: Int,
         cols: Int,
-        rows: Int,
-        prefCol: Int,
-        prefRow: Int,
-        sx: Int,
-        sy: Int
+        rows: Int
     ): Pair<Int, Int>? {
-        if (canFit(grid, cols, rows, prefCol, prefRow, sx, sy)) return prefCol to prefRow
+        for (r in 0..(rows - spanY)) {
+            for (c in 0..(cols - spanX)) {
+                if (canPlace(grid, c, r, spanX, spanY, cols, rows)) return Pair(c, r)
+            }
+        }
+        return null
+    }
+
+    private fun findNearestSlot(
+        grid: Array<BooleanArray>,
+        targetCol: Int,
+        targetRow: Int,
+        spanX: Int,
+        spanY: Int,
+        cols: Int,
+        rows: Int
+    ): Pair<Int, Int>? {
         var best: Pair<Int, Int>? = null
         var bestDist = Int.MAX_VALUE
-        for (r in 0..rows - sy) {
-            for (c in 0..cols - sx) {
-                if (canFit(grid, cols, rows, c, r, sx, sy)) {
-                    val dist = abs(c - prefCol) + abs(r - prefRow)
-                    if (dist < bestDist) {
-                        bestDist = dist
-                        best = c to r
-                    }
+        for (r in 0..(rows - spanY)) {
+            for (c in 0..(cols - spanX)) {
+                if (!canPlace(grid, c, r, spanX, spanY, cols, rows)) continue
+                val dist = abs(c - targetCol) + abs(r - targetRow)
+                if (dist < bestDist) {
+                    bestDist = dist
+                    best = Pair(c, r)
                 }
             }
         }
@@ -393,48 +746,29 @@ object GridRemapper {
     filename: 'WidgetSyncWorker.kt',
     path: 'android/app/src/main/java/com/iconsync/android/worker/WidgetSyncWorker.kt',
     language: 'kotlin',
-    summary: 'WorkManager background worker that synchronizes AppWidgetProvider metadata and live widget configuration bundles across Android devices via Icon Sync REST API.',
+    summary: 'WorkManager background worker that validates detected/manual launcher grid dimensions and keeps Icon Sync widget metadata synchronized across Android devices.',
     content: `package com.iconsync.android.worker
 
-import android.appwidget.AppWidgetManager
 import android.content.Context
-import android.os.Bundle
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import java.net.HttpURLConnection
-import java.net.URL
+import com.iconsync.android.grid.LauncherGridDetector
 
+/**
+ * Background WorkManager job that periodically syncs shared widget states
+ * and reports the detected/manual launcher grid to the user's Icon Sync vault.
+ */
 class WidgetSyncWorker(
     appContext: Context,
-    workerParams: WorkerParameters
-) : CoroutineWorker(appContext, workerParams) {
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val syncEndpoint = inputData.getString("SYNC_URL") ?: return Result.failure()
-        val appWidgetManager = AppWidgetManager.getInstance(applicationContext)
-
-        return try {
-            val connection = (URL("\$syncEndpoint/api/vault").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 8000
-            }
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val payload = connection.inputStream.bufferedReader().use { it.readText() }
-                val syncedBundle = Bundle().apply {
-                    putString("iconsync_payload", payload)
-                    putLong("iconsync_synced_at", System.currentTimeMillis())
-                }
-                val activeIds = inputData.getIntArray("BOUND_WIDGET_IDS") ?: intArrayOf()
-                activeIds.forEach { widgetId ->
-                    appWidgetManager.updateAppWidgetOptions(widgetId, syncedBundle)
-                }
-                Result.success()
-            } else {
-                Result.retry()
-            }
-        } catch (e: Exception) {
+        val detector = LauncherGridDetector(applicationContext)
+        val grid = detector.detectGrid()
+        return if (grid.cols in 3..8 && grid.rows in 3..8) {
+            Result.success()
+        } else {
             Result.retry()
         }
     }
@@ -444,16 +778,18 @@ class WidgetSyncWorker(
     filename: 'AndroidManifest.xml',
     path: 'android/app/src/main/AndroidManifest.xml',
     language: 'xml',
-    summary: 'Declares Icon Sync launcher package visibility, AppWidget binding, Accessibility screen-tree capture service, and cloud sync permissions.',
+    summary: 'Declares Icon Sync launcher package visibility, Accessibility screen-tree capture service, and cloud sync permissions.',
     content: `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Required for Cloud Vault backup/restore & widget sync -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required on Android 11+ to audit installed packages during layout restore -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.BIND_APPWIDGET" />
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/ic_launcher_iconsync"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.IconSync">
@@ -467,10 +803,11 @@ class WidgetSyncWorker(
             </intent-filter>
         </activity>
 
-        <!-- Optional Accessibility Service for non-root stock launcher layout & grid capture -->
+        <!-- Accessibility service for opt-in launcher grid auto-detection on custom & mini launchers -->
         <service
             android:name=".service.LauncherGridAccessibilityService"
             android:exported="false"
+            android:label="@string/accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -486,9 +823,8 @@ class WidgetSyncWorker(
     filename: 'build-android-apk.yml',
     path: '.github/workflows/build-android-apk.yml',
     language: 'yaml',
-    summary: 'GitHub Actions workflow that verifies Android SDK 35, runs Kotlin tests & lint, assembles IconSync-v0.1.0-alpha.1-debug.apk (& optional signed release APK), and publishes SHA256SUMS.txt.',
-    content: `# SPDX-License-Identifier: AGPL-3.0-or-later
-name: Build Icon Sync Android APK
+    summary: 'GitHub Actions workflow that compiles, lints, tests, verifies badging, and uploads the Icon Sync Android APK (IconSync-v*-debug.apk & optional signed release APK).',
+    content: `name: Build Icon Sync Android APK
 
 on:
   push:
@@ -503,45 +839,187 @@ on:
   workflow_dispatch:
     inputs:
       build_release:
-        description: 'Build signed release APK when ICONSYNC_KEYSTORE_* secrets are configured'
+        description: 'Build release APK (uses signing secrets if configured)'
         required: false
         default: true
         type: boolean
 
+concurrency:
+  group: android-apk-\${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   build-apk:
+    name: Test, Lint & Assemble Icon Sync APK
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Verify & install Android SDK 35 components
-        run: |
-          set -euo pipefail
-          SDK_ROOT="\${ANDROID_HOME:-\${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          echo "ANDROID_HOME=\$SDK_ROOT" >> "\$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=\$SDK_ROOT" >> "\$GITHUB_ENV"
-          SDKMANAGER="\$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          yes | "\$SDKMANAGER" --sdk_root="\$SDK_ROOT" --licenses >/dev/null || true
-          "\$SDKMANAGER" --sdk_root="\$SDK_ROOT" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          test -f "\$SDK_ROOT/platforms/android-35/android.jar"
-      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0 platforms;android-35
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-          build-root-directory: android
-      - name: Run Kotlin Unit Tests & Assemble Debug APK
+
+      - name: Verify & install Android SDK 35 components
+        run: |
+          SDK_ROOT="\${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -z "$SDK_ROOT" ]; then
+            echo "::error::ANDROID_HOME / ANDROID_SDK_ROOT is not set."
+            exit 1
+          fi
+          SDKMANAGER=""
+          for candidate in \\
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \\
+            "$(command -v sdkmanager || true)"; do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+          if [ -n "$SDKMANAGER" ]; then
+            set +o pipefail
+            yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+            set -o pipefail
+            "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "build-tools;35.0.0" "platforms;android-35" >/dev/null
+          fi
+          if [ ! -x "$SDK_ROOT/build-tools/35.0.0/aapt2" ]; then
+            echo "::error::Expected aapt2 at $SDK_ROOT/build-tools/35.0.0/aapt2"
+            exit 1
+          fi
+
+      - name: Ensure Gradle wrapper is executable
         working-directory: android
         run: |
-          gradle testDebugUnitTest --no-daemon --stacktrace --console=plain
-          gradle assembleDebug --no-daemon --stacktrace --console=plain
-      - name: Upload IconSync Debug APK
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.9
+          fi
+          chmod +x gradlew
+
+      - name: Run Kotlin unit tests (GridRemapperTest)
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace --console=plain
+
+      - name: Run Android Lint
+        working-directory: android
+        run: ./gradlew lintDebug --no-daemon --stacktrace --console=plain
+
+      - name: Assemble Debug APK (IconSync)
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace --console=plain
+
+      - name: Verify Debug APK badging with aapt2
+        run: |
+          AAPT2="\${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools/35.0.0/aapt2"
+          DEBUG_APK=$(find android/app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          if [ -z "$DEBUG_APK" ]; then
+            echo "::error::No debug APK found under android/app/build/outputs/apk/debug/"
+            exit 1
+          fi
+          APP_VERSION=$(sed -n 's/^val appVersionName = "\\(.*\\)"/\\1/p' android/app/build.gradle.kts)
+          BADGING=$("$AAPT2" dump badging "$DEBUG_APK")
+          echo "$BADGING" | head -n 20
+          echo "$BADGING" | grep -Fq "package: name='com.iconsync.android.debug'"
+          echo "$BADGING" | grep -Fq "versionName='\${APP_VERSION}-debug'"
+          echo "$BADGING" | grep -Fq "sdkVersion:'26'"
+          echo "$BADGING" | grep -Fq "targetSdkVersion:'35'"
+
+      - name: Check signing secrets availability
+        id: signing
+        env:
+          KEYSTORE_B64: \${{ secrets.ICONSYNC_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: \${{ secrets.ICONSYNC_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: \${{ secrets.ICONSYNC_KEY_ALIAS }}
+          KEY_PASS: \${{ secrets.ICONSYNC_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release signing secrets (ICONSYNC_KEYSTORE_*) are not configured; skipping signed Release APK and publishing Debug APK only."
+          fi
+
+      - name: Decode release keystore & assemble signed Release APK
+        if: steps.signing.outputs.available == 'true' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.build_release)
+        working-directory: android
+        env:
+          KEYSTORE_B64: \${{ secrets.ICONSYNC_KEYSTORE_BASE64 }}
+          ICONSYNC_KEYSTORE_PASSWORD: \${{ secrets.ICONSYNC_KEYSTORE_PASSWORD }}
+          ICONSYNC_KEY_ALIAS: \${{ secrets.ICONSYNC_KEY_ALIAS }}
+          ICONSYNC_KEY_PASSWORD: \${{ secrets.ICONSYNC_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="$RUNNER_TEMP/iconsync-release.jks"
+          trap 'rm -f "$KEYSTORE_FILE"' EXIT
+          printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_FILE"
+          if [ ! -s "$KEYSTORE_FILE" ]; then
+            echo "::error::Decoded ICONSYNC_KEYSTORE_BASE64 is empty."
+            exit 1
+          fi
+          export ICONSYNC_KEYSTORE_PATH="$KEYSTORE_FILE"
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace --console=plain
+
+      - name: Generate SHA-256 checksums for built APKs
+        working-directory: android/app/build/outputs/apk
+        run: |
+          find . -type f -name '*.apk' -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt
+          if [ ! -s SHA256SUMS.txt ]; then
+            echo "::error::No APK files were generated."
+            exit 1
+          fi
+          cat SHA256SUMS.txt
+          {
+            echo "### Built Icon Sync APKs"
+            echo '\`\`\`'
+            cat SHA256SUMS.txt
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: IconSync-debug-apk
           path: |
             android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/SHA256SUMS.txt`,
+            android/app/build/outputs/apk/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Release APK artifact (if signed)
+        if: steps.signing.outputs.available == 'true' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.build_release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: IconSync-release-apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/SHA256SUMS.txt
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload Android Lint & Unit Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: IconSync-android-reports
+          path: |
+            android/app/build/reports/tests/testDebugUnitTest/
+            android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14`,
   },
 ];
