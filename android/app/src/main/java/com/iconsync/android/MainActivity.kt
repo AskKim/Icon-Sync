@@ -1,25 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package com.iconsync.android
 
+import android.app.DownloadManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -54,6 +63,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accessibilityStatusView: TextView
     private lateinit var colsValueView: TextView
     private lateinit var rowsValueView: TextView
+    private lateinit var downloadLocationStatusView: TextView
+    private lateinit var lastSavedCard: LinearLayout
+    private lateinit var lastSavedTitleView: TextView
+    private lateinit var lastSavedLocationView: TextView
     private lateinit var activityLogView: TextView
 
     private val presetButtons = mutableListOf<Pair<Pair<Int, Int>, TextView>>()
@@ -63,6 +76,30 @@ class MainActivity : AppCompatActivity() {
     private var currentCols = 4
     private var currentRows = 5
     private var isDarkTheme = false
+
+    private val backupPrefs by lazy {
+        getSharedPreferences(PREFS_BACKUP, Context.MODE_PRIVATE)
+    }
+
+    private val selectFolderLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        if (treeUri == null) {
+            appendLog("Download folder selection cancelled.")
+            return@registerForActivityResult
+        }
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        runCatching {
+            contentResolver.takePersistableUriPermission(treeUri, flags)
+        }
+        val folderLabel = formatTreeFolderLabel(treeUri)
+        backupPrefs.edit {
+            putString(KEY_SAVE_TREE_URI, treeUri.toString())
+            putString(KEY_SAVE_TREE_LABEL, folderLabel)
+        }
+        refreshDownloadLocationUi()
+        appendLog("Default download location set to: $folderLabel")
+    }
 
     private val saveDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -75,16 +112,26 @@ class MainActivity : AppCompatActivity() {
             appendLog("Save cancelled.")
             return@registerForActivityResult
         }
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
         uiScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     backupService.exportSnapshotToUri(uri, snapshot)
+                    val displayName = backupService.resolveDisplayName(uri) ?: "icon-sync-backup.json"
+                    Pair(displayName, backupService.encodeSnapshotJson(snapshot))
                 }
-            }.onSuccess {
-                val iconCount = snapshot.screens.sumOf { it.icons.size }
-                appendLog(
-                    "Saved v2.0 JSON (${snapshot.gridCols}x${snapshot.gridRows}, $iconCount icons across ${snapshot.screens.size} screen(s)).\n" +
-                        "$captureNote\nReady to import in Icon Sync Web Studio."
+            }.onSuccess { (displayName, _) ->
+                onSaveCompleted(
+                    savedUri = uri,
+                    displayName = displayName,
+                    locationLabel = "Selected System Location",
+                    snapshot = snapshot,
+                    captureNote = captureNote
                 )
             }.onFailure { err ->
                 appendLog("Failed to save JSON: ${err.message ?: "Unknown I/O error"}")
@@ -383,17 +430,59 @@ class MainActivity : AppCompatActivity() {
         gridCard.addView(detectBtnRow)
         rootContainer.addView(gridCard)
 
-        // 4. Snapshot Export, Share & Cross-Grid Audit Card
+        // 4. Snapshot Export, Download Location, Quick Open & Cross-Grid Audit Card
         val backupCard = createCard(bgCard, borderCol)
         backupCard.addView(sectionLabel("v2.0 Snapshot & Cross-Grid Audit", textPrimary))
         backupCard.addView(
             TextView(this).apply {
-                text = "Save directly to Downloads/Drive for Icon Sync Web Studio, share via Android Sharesheet, or import a backup to audit missing apps."
+                text = "Choose a default download folder or ask each time, save your v2.0 JSON, and open or share it immediately."
                 textSize = 12f
                 setTextColor(textSecondary)
                 setPadding(0, dp(2), 0, dp(10))
             }
         )
+
+        // Download location selector box
+        val locationBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundedDrawable(bgMuted, borderCol, dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(10)
+            }
+        }
+        downloadLocationStatusView = TextView(this).apply {
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary)
+            setPadding(0, 0, 0, dp(8))
+        }
+        locationBox.addView(downloadLocationStatusView)
+
+        val locationBtnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        locationBtnRow.addView(
+            createActionButton("Choose Folder", bgCard, textPrimary, borderCol) {
+                selectFolderLauncher.launch(null)
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(8)
+                }
+            }
+        )
+        locationBtnRow.addView(
+            createActionButton("Ask Every Time", bgCard, textPrimary, borderCol) {
+                clearSavedDownloadFolder()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+        )
+        locationBox.addView(locationBtnRow)
+        backupCard.addView(locationBox)
 
         backupCard.addView(
             createActionButton("Save v2.0 JSON to Device", accentGreen, Color.WHITE, Color.TRANSPARENT) {
@@ -407,6 +496,63 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+
+        // Post-save quick access card ("Last Saved Backup" -> Open File / Open Folder / Share)
+        lastSavedCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundedDrawable(accentGreenSoft, accentGreen, dp(10))
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(8)
+            }
+        }
+        lastSavedTitleView = TextView(this).apply {
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(accentGreenText)
+        }
+        lastSavedLocationView = TextView(this).apply {
+            textSize = 11f
+            setTextColor(textSecondary)
+            setPadding(0, dp(2), 0, dp(8))
+        }
+        lastSavedCard.addView(lastSavedTitleView)
+        lastSavedCard.addView(lastSavedLocationView)
+
+        val openActionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        openActionRow.addView(
+            createActionButton("Open File", accentGreen, Color.WHITE, Color.TRANSPARENT) {
+                openLastSavedFile()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(6)
+                }
+            }
+        )
+        openActionRow.addView(
+            createActionButton("Open Folder", bgCard, textPrimary, borderCol) {
+                openSavedDownloadFolder()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(6)
+                }
+            }
+        )
+        openActionRow.addView(
+            createActionButton("Share", bgCard, textPrimary, borderCol) {
+                shareLastSavedOrFresh()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+        )
+        lastSavedCard.addView(openActionRow)
+        backupCard.addView(lastSavedCard)
 
         val secondaryBackupRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -476,6 +622,8 @@ class MainActivity : AppCompatActivity() {
 
         val restoredLog = savedInstanceState?.getCharSequence(KEY_LOG_TEXT)
         refreshStatus()
+        refreshDownloadLocationUi()
+        refreshLastSavedUi()
         if (!restoredLog.isNullOrEmpty()) {
             activityLogView.text = restoredLog
         } else {
@@ -510,18 +658,233 @@ class MainActivity : AppCompatActivity() {
                     backupService.buildLiveDeviceSnapshot()
                 }
             }.onSuccess { (snapshot, note) ->
-                pendingSaveSnapshot = snapshot
-                pendingSaveNote = note
                 val modelSlug = Build.MODEL.lowercase(Locale.ROOT)
                     .replace(Regex("[^a-z0-9]+"), "-")
                     .trim('-')
                     .ifBlank { "android" }
                 val suggestedName = "icon-sync-$modelSlug-${snapshot.gridCols}x${snapshot.gridRows}.json"
+
+                val persistedTree = getPersistedTreeUri()
+                if (persistedTree != null) {
+                    val folderLabel = backupPrefs.getString(KEY_SAVE_TREE_LABEL, null)
+                        ?: formatTreeFolderLabel(persistedTree)
+                    val savedDirectly = runCatching {
+                        withContext(Dispatchers.IO) {
+                            backupService.createAndExportSnapshotInTree(
+                                treeUri = persistedTree,
+                                fileName = suggestedName,
+                                snapshot = snapshot
+                            )
+                        }
+                    }
+                    savedDirectly.onSuccess { createdUri ->
+                        val resolvedName = withContext(Dispatchers.IO) {
+                            backupService.resolveDisplayName(createdUri) ?: suggestedName
+                        }
+                        onSaveCompleted(
+                            savedUri = createdUri,
+                            displayName = resolvedName,
+                            locationLabel = folderLabel,
+                            snapshot = snapshot,
+                            captureNote = note
+                        )
+                        return@onSuccess
+                    }.onFailure {
+                        appendLog("Selected folder is no longer writable; opening system Save As picker...")
+                    }
+                }
+
+                pendingSaveSnapshot = snapshot
+                pendingSaveNote = note
                 saveDocumentLauncher.launch(suggestedName)
             }.onFailure { err ->
                 appendLog("Snapshot build failed: ${err.message ?: "Unknown error"}")
             }
         }
+    }
+
+    private fun onSaveCompleted(
+        savedUri: Uri,
+        displayName: String,
+        locationLabel: String,
+        snapshot: LayoutBackupSnapshot,
+        captureNote: String
+    ) {
+        backupPrefs.edit {
+            putString(KEY_LAST_SAVED_URI, savedUri.toString())
+            putString(KEY_LAST_SAVED_NAME, displayName)
+            putString(KEY_LAST_SAVED_LOCATION, locationLabel)
+        }
+        refreshLastSavedUi()
+
+        val iconCount = snapshot.screens.sumOf { it.icons.size }
+        appendLog(
+            "Saved $displayName to $locationLabel (${snapshot.gridCols}x${snapshot.gridRows}, $iconCount icons across ${snapshot.screens.size} screen(s)).\n" +
+                "$captureNote\nTap \"Open File\" or \"Open Folder\" above to access it immediately."
+        )
+    }
+
+    private fun clearSavedDownloadFolder() {
+        backupPrefs.edit {
+            remove(KEY_SAVE_TREE_URI)
+            remove(KEY_SAVE_TREE_LABEL)
+        }
+        refreshDownloadLocationUi()
+        appendLog("Download location set to: Ask every time (System Save As picker).")
+    }
+
+    private fun getPersistedTreeUri(): Uri? {
+        val raw = backupPrefs.getString(KEY_SAVE_TREE_URI, null) ?: return null
+        val parsed = runCatching { Uri.parse(raw) }.getOrNull() ?: return null
+        val stillPersisted = contentResolver.persistedUriPermissions.any {
+            it.uri == parsed && it.isWritePermission
+        }
+        if (!stillPersisted) {
+            clearSavedDownloadFolder()
+            return null
+        }
+        return parsed
+    }
+
+    private fun formatTreeFolderLabel(treeUri: Uri): String {
+        val docId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+        if (!docId.isNullOrBlank()) {
+            return docId.substringAfter(':', docId).ifBlank { docId }
+        }
+        return treeUri.lastPathSegment ?: "Selected Folder"
+    }
+
+    private fun refreshDownloadLocationUi() {
+        if (!::downloadLocationStatusView.isInitialized) return
+        val savedTree = getPersistedTreeUri()
+        val label = if (savedTree != null) {
+            backupPrefs.getString(KEY_SAVE_TREE_LABEL, null) ?: formatTreeFolderLabel(savedTree)
+        } else {
+            null
+        }
+        downloadLocationStatusView.text = if (label != null) {
+            "Download Location: $label"
+        } else {
+            "Download Location: Ask every time (System Picker)"
+        }
+    }
+
+    private fun refreshLastSavedUi() {
+        if (!::lastSavedCard.isInitialized) return
+        val uriStr = backupPrefs.getString(KEY_LAST_SAVED_URI, null)
+        val fileName = backupPrefs.getString(KEY_LAST_SAVED_NAME, null)
+        val location = backupPrefs.getString(KEY_LAST_SAVED_LOCATION, null)
+        if (uriStr.isNullOrBlank() || fileName.isNullOrBlank()) {
+            lastSavedCard.visibility = View.GONE
+            return
+        }
+        lastSavedCard.visibility = View.VISIBLE
+        lastSavedTitleView.text = "Saved: $fileName"
+        lastSavedLocationView.text = "Location: ${location ?: "Device Storage"}"
+    }
+
+    private fun openLastSavedFile() {
+        val uriStr = backupPrefs.getString(KEY_LAST_SAVED_URI, null) ?: return
+        val fileName = backupPrefs.getString(KEY_LAST_SAVED_NAME, null) ?: "backup.json"
+        val uri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return
+
+        val jsonViewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/json")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (jsonViewIntent.resolveActivity(packageManager) != null) {
+            val launched = runCatching {
+                startActivity(Intent.createChooser(jsonViewIntent, "Open $fileName"))
+            }.isSuccess
+            if (launched) return
+        }
+
+        // Fall back to in-app JSON viewer so the user can always open and inspect the saved file
+        uiScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    backupService.readTextFromUri(uri)
+                }
+            }.onSuccess { content ->
+                showInAppFilePreviewDialog(fileName, content)
+            }.onFailure { err ->
+                appendLog("Could not open $fileName: ${err.message ?: "File moved or permission expired"}")
+            }
+        }
+    }
+
+    private fun showInAppFilePreviewDialog(fileName: String, content: String) {
+        val previewText = TextView(this).apply {
+            text = content
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setTextIsSelectable(true)
+        }
+        val scroll = ScrollView(this).apply {
+            addView(previewText)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(fileName)
+            .setView(scroll)
+            .setPositiveButton("Close", null)
+            .setNeutralButton("Copy JSON") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                clipboard?.setPrimaryClip(ClipData.newPlainText(fileName, content))
+                Toast.makeText(this, "Copied $fileName to clipboard", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun openSavedDownloadFolder() {
+        val treeUri = getPersistedTreeUri()
+        if (treeUri != null) {
+            val docUri = runCatching {
+                DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri)
+                )
+            }.getOrNull() ?: treeUri
+
+            val folderIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            if (folderIntent.resolveActivity(packageManager) != null) {
+                val opened = runCatching { startActivity(folderIntent) }.isSuccess
+                if (opened) {
+                    appendLog("Opened saved folder: ${formatTreeFolderLabel(treeUri)}")
+                    return
+                }
+            }
+        }
+
+        val downloadsIntent = Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)
+        val launched = runCatching { startActivity(downloadsIntent) }.isSuccess
+        if (launched) {
+            appendLog("Opened device Downloads folder.")
+        } else {
+            appendLog("Unable to launch the system Files/Downloads app on this device profile.")
+        }
+    }
+
+    private fun shareLastSavedOrFresh() {
+        val uriStr = backupPrefs.getString(KEY_LAST_SAVED_URI, null)
+        val fileName = backupPrefs.getString(KEY_LAST_SAVED_NAME, null) ?: "icon-sync-backup.json"
+        val uri = uriStr?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        if (uri != null) {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Icon Sync Backup ($fileName)")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val started = runCatching {
+                startActivity(Intent.createChooser(shareIntent, "Share $fileName"))
+            }.isSuccess
+            if (started) return
+        }
+        launchShareFlow()
     }
 
     private fun launchShareFlow() {
@@ -763,5 +1126,11 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val KEY_LOG_TEXT = "activity_log_text"
+        private const val PREFS_BACKUP = "icon_sync_backup_prefs"
+        private const val KEY_SAVE_TREE_URI = "save_tree_uri"
+        private const val KEY_SAVE_TREE_LABEL = "save_tree_label"
+        private const val KEY_LAST_SAVED_URI = "last_saved_uri"
+        private const val KEY_LAST_SAVED_NAME = "last_saved_name"
+        private const val KEY_LAST_SAVED_LOCATION = "last_saved_location"
     }
 }

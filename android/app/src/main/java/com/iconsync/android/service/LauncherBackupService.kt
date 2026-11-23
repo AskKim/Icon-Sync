@@ -4,6 +4,8 @@ package com.iconsync.android.service
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import com.iconsync.android.grid.GridRemapper
 import com.iconsync.android.grid.LauncherGridDetector
 import com.iconsync.android.grid.RemapResult
@@ -170,6 +172,48 @@ class LauncherBackupService(private val context: Context) {
             output.write(payload.toByteArray(Charsets.UTF_8))
             output.flush()
         } ?: throw IOException("Unable to open output stream for selected document URI.")
+    }
+
+    fun createAndExportSnapshotInTree(
+        treeUri: Uri,
+        fileName: String,
+        snapshot: LayoutBackupSnapshot
+    ): Uri {
+        val treeDocId = DocumentsContract.getTreeDocumentId(treeUri)
+        val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocId)
+        val createdUri = DocumentsContract.createDocument(
+            context.contentResolver,
+            parentDocUri,
+            "application/json",
+            fileName
+        ) ?: throw IOException("Unable to create $fileName inside selected folder.")
+        exportSnapshotToUri(createdUri, snapshot)
+        return createdUri
+    }
+
+    fun readTextFromUri(uri: Uri): String {
+        return context.contentResolver.openInputStream(uri)?.use { input ->
+            input.bufferedReader(Charsets.UTF_8).readText()
+        } ?: throw IOException("Unable to read saved file.")
+    }
+
+    fun resolveDisplayName(uri: Uri): String? {
+        return runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) cursor.getString(idx) else null
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
     }
 
     fun importAndAuditFromUri(

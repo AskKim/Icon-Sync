@@ -41,6 +41,7 @@ const ROOT_DIR = import.meta.dirname;
 
 // All persistent data is strictly confined inside `<repo>/.data/`
 const DATA_DIR = path.resolve(ROOT_DIR, '.data');
+const EXPORTS_DIR = resolveConfinedDataPath('exports');
 const VAULT_FILE = resolveConfinedDataPath('icon-sync-vault.json');
 const VAULT_BACKUP_FILE = resolveConfinedDataPath('icon-sync-vault.json.bak');
 const LEGACY_VAULT_FILE = resolveConfinedDataPath('homegrid-vault.json');
@@ -51,9 +52,23 @@ const STARTED_AT = Date.now();
 // Hard upper limits to protect memory and disk from abusive payloads
 const MAX_DEVICES = 32;
 const MAX_BACKUPS = 250;
+const MAX_EXPORT_FOLDERS = 32;
+const MAX_EXPORT_FILES_PER_FOLDER = 200;
+const DEFAULT_EXPORT_FOLDERS = ['backups', 'missing-apps', 'diagnostics'];
 const ALLOWED_CONFLICT_STRATEGIES = new Set(['newest', 'primary_device', 'manual']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]{1,96}$/;
+const SAFE_EXPORT_FOLDER_PATTERN = /^[a-zA-Z0-9_-]{1,48}$/;
+const SAFE_EXPORT_FILENAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/;
+const EXPORT_MIME_BY_EXT: Record<string, string> = {
+  '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.kt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.yml': 'text/yaml; charset=utf-8',
+  '.yaml': 'text/yaml; charset=utf-8',
+};
 
 interface VaultStore {
   devices: unknown[];
@@ -77,6 +92,56 @@ function resolveConfinedDataPath(filename: string): string {
     throw new Error(`Refused path outside confined data directory: ${filename}`);
   }
   return resolved;
+}
+
+function validateExportFolderName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!SAFE_EXPORT_FOLDER_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+function validateExportFilename(raw: unknown): { filename: string; ext: string } | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!SAFE_EXPORT_FILENAME_PATTERN.test(trimmed) || trimmed.includes('..')) {
+    return null;
+  }
+  const ext = path.extname(trimmed).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(EXPORT_MIME_BY_EXT, ext)) {
+    return null;
+  }
+  return { filename: trimmed, ext };
+}
+
+function resolveConfinedExportFolderPath(folder: string): string {
+  const resolved = path.resolve(EXPORTS_DIR, folder);
+  if (!resolved.startsWith(EXPORTS_DIR + path.sep)) {
+    throw new Error(`Refused export folder outside exports directory: ${folder}`);
+  }
+  return resolved;
+}
+
+function resolveConfinedExportFilePath(folder: string, filename: string): string {
+  const folderPath = resolveConfinedExportFolderPath(folder);
+  const resolved = path.resolve(folderPath, filename);
+  if (!resolved.startsWith(folderPath + path.sep)) {
+    throw new Error(`Refused export file outside folder boundary: ${filename}`);
+  }
+  return resolved;
+}
+
+function ensureExportsRoot(): void {
+  ensureDataDir();
+  if (!fs.existsSync(EXPORTS_DIR)) {
+    fs.mkdirSync(EXPORTS_DIR, { recursive: true, mode: 0o700 });
+  }
+  for (const folder of DEFAULT_EXPORT_FOLDERS) {
+    const dir = resolveConfinedExportFolderPath(folder);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+  }
 }
 
 /**
@@ -507,6 +572,222 @@ async function startServer() {
     } catch (err) {
       console.error('Backup deletion failed:', err);
       res.status(500).json({ error: 'Failed to update vault after deletion.' });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /api/exports/folders — List selectable workspace export folders
+  // --------------------------------------------------------------------------
+  app.get('/api/exports/folders', (_req, res) => {
+    try {
+      ensureExportsRoot();
+      const entries = fs.readdirSync(EXPORTS_DIR, { withFileTypes: true });
+      const folders = entries
+        .filter((e) => e.isDirectory() && SAFE_EXPORT_FOLDER_PATTERN.test(e.name))
+        .map((e) => {
+          const dirPath = resolveConfinedExportFolderPath(e.name);
+          const files = fs
+            .readdirSync(dirPath, { withFileTypes: true })
+            .filter((f) => f.isFile() && validateExportFilename(f.name) !== null);
+          return {
+            name: e.name,
+            fileCount: files.length,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      res.json({ ok: true, folders });
+    } catch (err) {
+      console.error('Failed to list export folders:', err);
+      res.status(500).json({ error: 'Failed to list export folders.' });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /api/exports — List saved files in a selected workspace export folder
+  // --------------------------------------------------------------------------
+  app.get('/api/exports', (req, res) => {
+    const folder = validateExportFolderName(req.query.folder ?? 'backups');
+    if (!folder) {
+      res.status(400).json({ error: 'Invalid export folder name.' });
+      return;
+    }
+
+    try {
+      ensureExportsRoot();
+      const dirPath = resolveConfinedExportFolderPath(folder);
+      if (!fs.existsSync(dirPath)) {
+        res.json({ ok: true, folder, files: [] });
+        return;
+      }
+
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      const files = entries
+        .filter((e) => e.isFile())
+        .map((e) => {
+          const validated = validateExportFilename(e.name);
+          if (!validated) return null;
+          const filePath = resolveConfinedExportFilePath(folder, validated.filename);
+          const stat = fs.statSync(filePath);
+          return {
+            filename: validated.filename,
+            folder,
+            sizeBytes: stat.size,
+            updatedAt: stat.mtime.toISOString(),
+            mimeType: EXPORT_MIME_BY_EXT[validated.ext],
+            url: `/api/exports/file/${encodeURIComponent(folder)}/${encodeURIComponent(validated.filename)}`,
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+      res.json({ ok: true, folder, files });
+    } catch (err) {
+      console.error('Failed to list exported files:', err);
+      res.status(500).json({ error: 'Failed to read export folder.' });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // POST /api/exports — Save an exported file into a selected workspace folder
+  // --------------------------------------------------------------------------
+  app.post('/api/exports', writeLimiter, async (req, res) => {
+    const rawBody = req.body as Record<string, unknown> | undefined;
+    const folder = validateExportFolderName(rawBody?.folder ?? 'backups');
+    const fileInfo = validateExportFilename(rawBody?.filename);
+    const content = typeof rawBody?.content === 'string' ? rawBody.content : null;
+
+    if (!folder || !fileInfo || content === null) {
+      res.status(400).json({
+        error: 'Invalid export payload. Provide a valid folder, filename, and string content.',
+      });
+      return;
+    }
+
+    if (Buffer.byteLength(content, 'utf-8') > 3_500_000) {
+      res.status(413).json({ error: 'Export file exceeds 3.5 MB size limit.' });
+      return;
+    }
+
+    try {
+      const savedMeta = await enqueueVaultMutation(() => {
+        ensureExportsRoot();
+        const existingFolders = fs
+          .readdirSync(EXPORTS_DIR, { withFileTypes: true })
+          .filter((e) => e.isDirectory());
+        const folderPath = resolveConfinedExportFolderPath(folder);
+        if (!fs.existsSync(folderPath)) {
+          if (existingFolders.length >= MAX_EXPORT_FOLDERS) {
+            throw new Error(`Maximum export folder limit (${MAX_EXPORT_FOLDERS}) reached.`);
+          }
+          fs.mkdirSync(folderPath, { recursive: true, mode: 0o700 });
+        }
+
+        const existingFiles = fs.readdirSync(folderPath, { withFileTypes: true }).filter((e) => e.isFile());
+        const targetPath = resolveConfinedExportFilePath(folder, fileInfo.filename);
+        if (!fs.existsSync(targetPath) && existingFiles.length >= MAX_EXPORT_FILES_PER_FOLDER) {
+          throw new Error(`Folder "${folder}" reached max file limit (${MAX_EXPORT_FILES_PER_FOLDER}).`);
+        }
+
+        const tmpFile = resolveConfinedExportFilePath(
+          folder,
+          `.tmp-${process.pid}-${Date.now()}-${crypto.randomUUID()}.json`
+        );
+        fs.writeFileSync(tmpFile, content, { encoding: 'utf-8', mode: 0o600 });
+        try {
+          fs.renameSync(tmpFile, targetPath);
+        } catch (renameErr) {
+          if (fs.existsSync(tmpFile)) {
+            try {
+              fs.unlinkSync(tmpFile);
+            } catch {
+              // ignore cleanup failure
+            }
+          }
+          throw renameErr;
+        }
+        const stat = fs.statSync(targetPath);
+        return {
+          filename: fileInfo.filename,
+          folder,
+          sizeBytes: stat.size,
+          updatedAt: stat.mtime.toISOString(),
+          mimeType: EXPORT_MIME_BY_EXT[fileInfo.ext],
+          url: `/api/exports/file/${encodeURIComponent(folder)}/${encodeURIComponent(fileInfo.filename)}`,
+        };
+      });
+
+      res.status(201).json({ ok: true, file: savedMeta });
+    } catch (err) {
+      console.error('Failed to save export file:', err);
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to save export file.',
+      });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // GET /api/exports/file/:folder/:filename — Open or download a saved export file
+  // --------------------------------------------------------------------------
+  app.get('/api/exports/file/:folder/:filename', async (req, res) => {
+    const folder = validateExportFolderName(req.params.folder);
+    const fileInfo = validateExportFilename(req.params.filename);
+    if (!folder || !fileInfo) {
+      res.status(400).json({ error: 'Invalid folder or filename.' });
+      return;
+    }
+
+    try {
+      const filePath = resolveConfinedExportFilePath(folder, fileInfo.filename);
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: 'Exported file not found.' });
+        return;
+      }
+      const asDownload = req.query.download === '1';
+      res.setHeader('Content-Type', EXPORT_MIME_BY_EXT[fileInfo.ext]);
+      res.setHeader(
+        'Content-Disposition',
+        `${asDownload ? 'attachment' : 'inline'}; filename="${fileInfo.filename}"`
+      );
+      if (fileInfo.ext === '.html') {
+        res.setHeader(
+          'Content-Security-Policy',
+          "default-src 'none'; style-src 'unsafe-inline';"
+        );
+      }
+      const data = await fs.promises.readFile(filePath);
+      res.send(data);
+    } catch (err) {
+      console.error('Failed to serve export file:', err);
+      res.status(500).json({ error: 'Failed to read exported file.' });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // DELETE /api/exports/file/:folder/:filename — Delete a saved export file
+  // --------------------------------------------------------------------------
+  app.delete('/api/exports/file/:folder/:filename', writeLimiter, async (req, res) => {
+    const folder = validateExportFolderName(req.params.folder);
+    const fileInfo = validateExportFilename(req.params.filename);
+    if (!folder || !fileInfo) {
+      res.status(400).json({ error: 'Invalid folder or filename.' });
+      return;
+    }
+
+    try {
+      const removed = await enqueueVaultMutation(() => {
+        const filePath = resolveConfinedExportFilePath(folder, fileInfo.filename);
+        if (!fs.existsSync(filePath)) return false;
+        fs.unlinkSync(filePath);
+        return true;
+      });
+      if (!removed) {
+        res.status(404).json({ error: 'Exported file not found.' });
+        return;
+      }
+      res.json({ ok: true, folder, filename: fileInfo.filename });
+    } catch (err) {
+      console.error('Failed to delete export file:', err);
+      res.status(500).json({ error: 'Failed to delete exported file.' });
     }
   });
 

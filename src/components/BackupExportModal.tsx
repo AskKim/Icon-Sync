@@ -6,8 +6,14 @@ import {
   estimateIconArtPayload,
 } from '../engine/layoutEngine';
 
+import { DownloadLocationPreferences } from '../services/downloadManager';
+import { DownloadLocationControl } from './DownloadLocationControl';
+
 interface BackupExportModalProps {
   device: DeviceProfile;
+  downloadPrefs: DownloadLocationPreferences;
+  onChangeDownloadPrefs: (next: DownloadLocationPreferences) => void;
+  onOpenFolderBrowser: () => void;
   onClose: () => void;
   onConfirmExport: (payload: {
     name: string;
@@ -19,6 +25,9 @@ interface BackupExportModalProps {
 
 export function BackupExportModal({
   device,
+  downloadPrefs,
+  onChangeDownloadPrefs,
+  onOpenFolderBrowser,
   onClose,
   onConfirmExport,
 }: BackupExportModalProps) {
@@ -232,6 +241,17 @@ export function BackupExportModal({
                 })}
               </div>
             </div>
+
+            {(destination === 'local' || destination === 'both') && (
+              <DownloadLocationControl
+                prefs={downloadPrefs}
+                onChangePrefs={onChangeDownloadPrefs}
+                onOpenFolderBrowser={() => {
+                  onClose();
+                  onOpenFolderBrowser();
+                }}
+              />
+            )}
           </div>
 
           <div className="pt-2 flex items-center justify-end gap-2.5">

@@ -42,6 +42,7 @@ import {
   fetchServerDiagnostics,
   inspectLocalStorageCache,
 } from '../services/cloudApi';
+import { SavedFileRecord } from '../services/downloadManager';
 
 const LazyCompanionView = lazy(() =>
   import('./CompanionView').then((m) => ({ default: m.CompanionView }))
@@ -69,6 +70,7 @@ interface DeveloperToolsViewProps {
   onClearLogs: () => void;
   onRecordLog: (entry: Omit<DiagnosticLogEntry, 'id' | 'timestamp'>) => void;
   onNotify: (severity: 'success' | 'warning' | 'error' | 'info', title: string, message: string) => void;
+  onFileSaved?: (record: SavedFileRecord) => void;
 }
 
 export function DeveloperToolsView({
@@ -91,6 +93,7 @@ export function DeveloperToolsView({
   onClearLogs,
   onRecordLog,
   onNotify,
+  onFileSaved,
 }: DeveloperToolsViewProps) {
   const [subTab, setSubTab] = useState<DevSubTab>('health');
   const [serverDiag, setServerDiag] = useState<ServerDiagnosticsSnapshot | null>(null);
@@ -347,7 +350,12 @@ export function DeveloperToolsView({
           </button>
           <button
             type="button"
-            onClick={() => downloadDiagnosticsBundle(buildFullDiagnosticsBundle())}
+            onClick={async () => {
+              const saved = await downloadDiagnosticsBundle(buildFullDiagnosticsBundle());
+              if (!saved.cancelled) {
+                onFileSaved?.(saved);
+              }
+            }}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#111827] hover:bg-[#1F2937] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
@@ -1147,7 +1155,7 @@ export function DeveloperToolsView({
             </div>
           }
         >
-          <LazyCompanionView />
+          <LazyCompanionView onFileSaved={onFileSaved} />
         </Suspense>
       )}
     </div>

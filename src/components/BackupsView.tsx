@@ -24,6 +24,9 @@ import {
   Cloud,
   Copy,
   Download,
+  ExternalLink,
+  Folder,
+  FolderOpen,
   HardDrive,
   RotateCcw,
   Search,
@@ -32,11 +35,18 @@ import {
 } from 'lucide-react';
 import { LayoutBackupSnapshot } from '../types/layout';
 import { backupIncludesIconArt, getBackupIconArtCount } from '../engine/layoutEngine';
+import { DownloadLocationPreferences, SavedFileRecord } from '../services/downloadManager';
+import { DownloadLocationControl } from './DownloadLocationControl';
 
 type SortOption = 'newest' | 'oldest' | 'name' | 'icons';
 
 interface BackupsViewProps {
   backups: LayoutBackupSnapshot[];
+  downloadPrefs: DownloadLocationPreferences;
+  lastSavedFile: SavedFileRecord | null;
+  onChangeDownloadPrefs: (next: DownloadLocationPreferences) => void;
+  onOpenSavedFile: (file: SavedFileRecord) => void;
+  onOpenSavedFolder: () => void;
   onOpenImportModal: (backupId?: string) => void;
   onOpenExportModal: () => void;
   onDownloadBackup: (backup: LayoutBackupSnapshot) => void;
@@ -46,12 +56,18 @@ interface BackupsViewProps {
 
 export function BackupsView({
   backups,
+  downloadPrefs,
+  lastSavedFile,
+  onChangeDownloadPrefs,
+  onOpenSavedFile,
+  onOpenSavedFolder,
   onOpenImportModal,
   onOpenExportModal,
   onDownloadBackup,
   onDuplicateBackup,
   onDeleteBackup,
 }: BackupsViewProps) {
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [filter, setFilter] = useState<'all' | 'cloud' | 'local'>('all');
   const [gridFilter, setGridFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
@@ -109,7 +125,32 @@ export function BackupsView({
             Restore any saved snapshot to another Android device using Replace or Merge mode, or export portable JSON files.
           </p>
         </div>
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowLocationPicker((v) => !v)}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-[#111827] bg-white border border-[#E4E7EC] hover:border-[#9CA3AF] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Folder className="w-3.5 h-3.5 text-[#166534]" />
+            Save To:{' '}
+            <span className="font-semibold">
+              {downloadPrefs.mode === 'workspace-folder'
+                ? downloadPrefs.workspaceFolder
+                : downloadPrefs.mode === 'device-folder'
+                ? downloadPrefs.deviceFolderName ?? 'Device Folder'
+                : downloadPrefs.mode === 'ask-each-time'
+                ? 'Ask Each Time'
+                : 'Downloads'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSavedFolder}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-[#111827] bg-white border border-[#E4E7EC] hover:border-[#9CA3AF] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-[#166534]" />
+            Open Saved Folder
+          </button>
           <button
             type="button"
             onClick={() => onOpenImportModal()}
@@ -128,6 +169,45 @@ export function BackupsView({
           </button>
         </div>
       </div>
+
+      {showLocationPicker && (
+        <DownloadLocationControl
+          prefs={downloadPrefs}
+          onChangePrefs={onChangeDownloadPrefs}
+          onOpenFolderBrowser={onOpenSavedFolder}
+          compact
+        />
+      )}
+
+      {lastSavedFile && (
+        <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0 text-xs text-[#14532D]">
+            <span className="font-semibold">Last Saved:</span>{' '}
+            <span className="font-mono font-medium">{lastSavedFile.filename}</span>{' '}
+            <span className="text-[#166534]">
+              ({lastSavedFile.locationLabel} · {(lastSavedFile.sizeBytes / 1024).toFixed(1)} KB)
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => onOpenSavedFile(lastSavedFile)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#166534] hover:bg-[#14532D] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Open File
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSavedFolder}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#111827] bg-white border border-[#BBF7D0] hover:border-[#166534] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              Open Folder
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Filter, Grid Selector, Sort & Search Bar */}
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">

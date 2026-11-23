@@ -38,6 +38,11 @@ import {
   sanitizeText,
   stripDangerousKeys,
 } from '../utils/sanitize';
+import {
+  DownloadLocationPreferences,
+  SavedFileRecord,
+  saveExportedFile,
+} from './downloadManager';
 
 export const LOCAL_STORAGE_KEY = 'iconsync.vault.v4';
 const LEGACY_STORAGE_KEY = 'homegrid.vault.v3';
@@ -431,41 +436,43 @@ export async function removeBackupFromCloud(
   }
 }
 
-function triggerBlobDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.rel = 'noopener';
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  // Defer revocation so Android WebView and mobile browsers complete reading the blob stream
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-export function downloadBackupJson(backup: LayoutBackupSnapshot): void {
+export async function downloadBackupJson(
+  backup: LayoutBackupSnapshot,
+  overridePrefs?: DownloadLocationPreferences
+): Promise<SavedFileRecord> {
   const safeName = backup.name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
   const filename = `icon-sync-${safeName || 'backup'}-${backup.createdAt.slice(0, 10)}.json`;
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-  triggerBlobDownload(blob, filename);
+  return saveExportedFile({
+    filename,
+    content: JSON.stringify(backup, null, 2),
+    mimeType: 'application/json',
+    overridePrefs,
+  });
 }
 
-export function downloadDiagnosticsBundle(payload: unknown): void {
+export async function downloadDiagnosticsBundle(
+  payload: unknown,
+  overridePrefs?: DownloadLocationPreferences
+): Promise<SavedFileRecord> {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  triggerBlobDownload(blob, `icon-sync-diagnostics-${stamp}.json`);
+  return saveExportedFile({
+    filename: `icon-sync-diagnostics-${stamp}.json`,
+    content: JSON.stringify(payload, null, 2),
+    mimeType: 'application/json',
+    overridePrefs,
+  });
 }
 
-export function downloadMissingAppsFile(
+export async function downloadMissingAppsFile(
   targetDeviceName: string,
   backupName: string,
   missingApps: MissingAppEntry[],
-  format: 'txt' | 'html' = 'txt'
-): void {
+  format: 'txt' | 'html' = 'txt',
+  overridePrefs?: DownloadLocationPreferences
+): Promise<SavedFileRecord> {
   const safeDevice = targetDeviceName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -519,12 +526,12 @@ export function downloadMissingAppsFile(
 </body>
 </html>`;
 
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    triggerBlobDownload(
-      blob,
-      `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.html`
-    );
-    return;
+    return saveExportedFile({
+      filename: `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.html`,
+      content: html,
+      mimeType: 'text/html;charset=utf-8',
+      overridePrefs,
+    });
   }
 
   const lines = [
@@ -544,9 +551,10 @@ export function downloadMissingAppsFile(
     ]),
   ];
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
-  triggerBlobDownload(
-    blob,
-    `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.txt`
-  );
+  return saveExportedFile({
+    filename: `icon-sync-missing-apps-${safeDevice || 'device'}-${dateStamp}.txt`,
+    content: lines.join('\n'),
+    mimeType: 'text/plain;charset=utf-8',
+    overridePrefs,
+  });
 }

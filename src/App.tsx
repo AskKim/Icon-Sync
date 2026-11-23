@@ -91,6 +91,12 @@ import {
   removeBackupFromCloud,
   setFaultSimulationConfig,
 } from './services/cloudApi';
+import {
+  DownloadLocationPreferences,
+  loadDownloadPreferences,
+  saveDownloadPreferences,
+  SavedFileRecord,
+} from './services/downloadManager';
 import { PhoneCanvas } from './components/PhoneCanvas';
 import { InspectorPanel } from './components/InspectorPanel';
 import { FeedbackBanner } from './components/FeedbackBanner';
@@ -102,6 +108,7 @@ import { BackupExportModal } from './components/BackupExportModal';
 import { ImportRestoreModal } from './components/ImportRestoreModal';
 import { MissingAppsModal } from './components/MissingAppsModal';
 import { AddDeviceModal } from './components/AddDeviceModal';
+import { SavedFileModal } from './components/SavedFileModal';
 
 type ActiveTab = 'screens' | 'backups' | 'widgets' | 'how-it-works' | 'developer';
 
@@ -272,6 +279,15 @@ export default function App() {
   const [logs, setLogs] = useState<DiagnosticLogEntry[]>([]);
   const [faultConfig, setFaultConfig] = useState<FaultSimulationConfig>(DEFAULT_FAULT_CONFIG);
   const [hydrated, setHydrated] = useState(false);
+  const [downloadPrefs, setDownloadPrefs] = useState<DownloadLocationPreferences>(() =>
+    loadDownloadPreferences()
+  );
+  const [recentSavedFiles, setRecentSavedFiles] = useState<SavedFileRecord[]>([]);
+  const [savedViewerState, setSavedViewerState] = useState<{
+    open: boolean;
+    initialTab: 'file' | 'folder';
+    activeFile: SavedFileRecord | null;
+  }>({ open: false, initialTab: 'file', activeFile: null });
 
   const autoHideTimersRef = useRef<Map<string, number>>(new Map());
   const scanTimerRef = useRef<number | null>(null);
@@ -345,6 +361,107 @@ export default function App() {
       }
     },
     []
+  );
+
+  const handleUpdateDownloadPrefs = useCallback((next: DownloadLocationPreferences) => {
+    const normalized = saveDownloadPreferences(next);
+    setDownloadPrefs(normalized);
+  }, []);
+
+  const openSavedFileViewer = useCallback((file: SavedFileRecord) => {
+    setSavedViewerState({
+      open: true,
+      initialTab: 'file',
+      activeFile: file,
+    });
+  }, []);
+
+  const openSavedFolderBrowser = useCallback(
+    (fallbackFile?: SavedFileRecord | null) => {
+      setSavedViewerState((prev) => ({
+        open: true,
+        initialTab: 'folder',
+        activeFile: fallbackFile ?? prev.activeFile ?? recentSavedFiles[0] ?? null,
+      }));
+    },
+    [recentSavedFiles]
+  );
+
+  const buildPostSaveActions = useCallback(
+    (saved: SavedFileRecord): FeedbackRecoveryAction[] => [
+      {
+        id: `open-file-${saved.id}`,
+        label: 'Open File',
+        variant: 'primary',
+        onClick: () => openSavedFileViewer(saved),
+      },
+      {
+        id: `open-folder-${saved.id}`,
+        label: 'Open Folder',
+        variant: 'secondary',
+        onClick: () => openSavedFolderBrowser(saved),
+      },
+    ],
+    [openSavedFileViewer, openSavedFolderBrowser]
+  );
+
+  const registerSavedFile = useCallback(
+    (saved: SavedFileRecord, announce = false) => {
+      if (saved.cancelled) return;
+      setRecentSavedFiles((prev) => [saved, ...prev.filter((f) => f.id !== saved.id)].slice(0, 12));
+      if (announce) {
+        pushFeedback({
+          severity: saved.fallbackNotice ? 'warning' : 'success',
+          title: `Saved ${saved.filename}`,
+          message: saved.fallbackNotice
+            ? `${saved.fallbackNotice} Location: ${saved.locationLabel}.`
+            : `Saved (${(saved.sizeBytes / 1024).toFixed(1)} KB) to ${saved.locationLabel}.`,
+          recoveryActions: buildPostSaveActions(saved),
+          autoHideMs: 10000,
+        });
+      }
+    },
+    [buildPostSaveActions, pushFeedback]
+  );
+
+  const handleDownloadBackupWithTracking = useCallback(
+    async (backup: LayoutBackupSnapshot, announce = true): Promise<SavedFileRecord> => {
+      const saved = await downloadBackupJson(backup, downloadPrefs);
+      if (saved.cancelled) {
+        pushFeedback({
+          severity: 'info',
+          title: 'Save cancelled',
+          message: `Cancelled saving "${backup.name}".`,
+        });
+      } else {
+        registerSavedFile(saved, announce);
+      }
+      return saved;
+    },
+    [downloadPrefs, pushFeedback, registerSavedFile]
+  );
+
+  const handleDownloadMissingAppsWithTracking = useCallback(
+    async (
+      targetDeviceName: string,
+      backupName: string,
+      missingApps: MissingAppEntry[],
+      format: 'txt' | 'html',
+      announce = true
+    ): Promise<SavedFileRecord> => {
+      const saved = await downloadMissingAppsFile(
+        targetDeviceName,
+        backupName,
+        missingApps,
+        format,
+        downloadPrefs
+      );
+      if (!saved.cancelled) {
+        registerSavedFile(saved, announce);
+      }
+      return saved;
+    },
+    [downloadPrefs, registerSavedFile]
   );
 
   // Sync fault simulator configuration with cloudApi
@@ -530,7 +647,7 @@ export default function App() {
                     notes: 'Downloaded locally while Cloud Vault was unavailable.',
                     storage: 'local',
                   });
-                  downloadBackupJson(emergency);
+                  void handleDownloadBackupWithTracking(emergency, true);
                 }
               },
             },
@@ -1393,8 +1510,9 @@ export default function App() {
     setBackups((prev) => [snapshot, ...prev]);
     setShowExportModal(false);
 
+    let savedLocalFile: SavedFileRecord | null = null;
     if (destination === 'local' || destination === 'both') {
-      downloadBackupJson(snapshot);
+      savedLocalFile = await handleDownloadBackupWithTracking(snapshot, false);
     }
 
     if (destination === 'cloud' || destination === 'both') {
@@ -1444,7 +1562,9 @@ export default function App() {
                         id: 'dl-after-retry-fail',
                         label: 'Download JSON File',
                         variant: 'primary',
-                        onClick: () => downloadBackupJson(snapshot),
+                        onClick: () => {
+                          void handleDownloadBackupWithTracking(snapshot, true);
+                        },
                       },
                     ],
                   });
@@ -1455,7 +1575,9 @@ export default function App() {
               id: 'download-fallback-backup',
               label: 'Download JSON Instead',
               variant: 'secondary',
-              onClick: () => downloadBackupJson(snapshot),
+              onClick: () => {
+                void handleDownloadBackupWithTracking(snapshot, true);
+              },
             },
           ],
         });
@@ -1486,6 +1608,9 @@ export default function App() {
             variant: 'primary',
             onClick: () => setActiveTab('developer'),
           },
+          ...(savedLocalFile && !savedLocalFile.cancelled
+            ? buildPostSaveActions(savedLocalFile)
+            : []),
         ],
       });
       return;
@@ -1494,15 +1619,28 @@ export default function App() {
     const artSummary = includeIconArt
       ? ` with icon art (${snapshot.stats.iconArtCount ?? 0} apps)`
       : ' (layout only, no icon art)';
+    const savedWhere =
+      savedLocalFile && !savedLocalFile.cancelled
+        ? ` to ${savedLocalFile.locationLabel} (${savedLocalFile.filename})`
+        : '';
     pushFeedback({
-      severity: 'success',
+      severity: savedLocalFile?.fallbackNotice ? 'warning' : 'success',
       title: `Backup "${snapshot.name}" created`,
       message:
         destination === 'local'
-          ? `Downloaded local JSON snapshot (${snapshot.gridCols}×${snapshot.gridRows})${artSummary}.`
+          ? `Saved local JSON snapshot${savedWhere} (${snapshot.gridCols}×${snapshot.gridRows})${artSummary}.${
+              savedLocalFile?.fallbackNotice ? ` ${savedLocalFile.fallbackNotice}` : ''
+            }`
           : destination === 'cloud'
           ? `Saved ${snapshot.gridCols}×${snapshot.gridRows} layout snapshot to Cloud Vault${artSummary}.`
-          : `Saved to Cloud Vault and downloaded local JSON file (${snapshot.gridCols}×${snapshot.gridRows})${artSummary}.`,
+          : `Saved to Cloud Vault and exported local JSON${savedWhere} (${snapshot.gridCols}×${snapshot.gridRows})${artSummary}.${
+              savedLocalFile?.fallbackNotice ? ` ${savedLocalFile.fallbackNotice}` : ''
+            }`,
+      recoveryActions:
+        savedLocalFile && !savedLocalFile.cancelled
+          ? buildPostSaveActions(savedLocalFile)
+          : undefined,
+      autoHideMs: savedLocalFile && !savedLocalFile.cancelled ? 10000 : undefined,
     });
   };
 
@@ -1623,11 +1761,12 @@ export default function App() {
 
     if (report.missingApps.length > 0) {
       if (autoDownloadMissingFile) {
-        downloadMissingAppsFile(
+        void handleDownloadMissingAppsWithTracking(
           report.targetDeviceName,
           report.backupName,
           report.missingApps,
-          'txt'
+          'txt',
+          false
         );
       }
       setMissingAppsSession({
@@ -2133,14 +2272,15 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          downloadMissingAppsFile(
+                        onClick={() => {
+                          void handleDownloadMissingAppsWithTracking(
                             missingAppsSession.targetDeviceName,
                             missingAppsSession.backupName,
                             missingAppsSession.missingApps,
-                            'txt'
-                          )
-                        }
+                            'txt',
+                            true
+                          );
+                        }}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#111827] bg-white border border-[#E4E7EC] hover:border-[#9CA3AF] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
                       >
                         <Download className="w-3.5 h-3.5" />
@@ -2255,11 +2395,18 @@ export default function App() {
             {activeTab === 'backups' && (
               <BackupsView
                 backups={backups}
+                downloadPrefs={downloadPrefs}
+                lastSavedFile={recentSavedFiles[0] ?? null}
+                onChangeDownloadPrefs={handleUpdateDownloadPrefs}
+                onOpenSavedFile={openSavedFileViewer}
+                onOpenSavedFolder={() => openSavedFolderBrowser()}
                 onOpenImportModal={(backupId) =>
                   setImportModalState({ open: true, backupId })
                 }
                 onOpenExportModal={() => setShowExportModal(true)}
-                onDownloadBackup={downloadBackupJson}
+                onDownloadBackup={(backup) => {
+                  void handleDownloadBackupWithTracking(backup, true);
+                }}
                 onDuplicateBackup={handleDuplicateBackup}
                 onDeleteBackup={handleDeleteBackup}
               />
@@ -2310,6 +2457,7 @@ export default function App() {
                 onNotify={(severity, title, message) =>
                   pushFeedback({ severity, title, message })
                 }
+                onFileSaved={(saved) => registerSavedFile(saved, true)}
               />
             )}
           </>
@@ -2344,6 +2492,9 @@ export default function App() {
       {showExportModal && (
         <BackupExportModal
           device={activeDevice}
+          downloadPrefs={downloadPrefs}
+          onChangeDownloadPrefs={handleUpdateDownloadPrefs}
+          onOpenFolderBrowser={() => openSavedFolderBrowser()}
           onClose={() => setShowExportModal(false)}
           onConfirmExport={handleConfirmExport}
         />
@@ -2371,7 +2522,9 @@ export default function App() {
           }
           onDownloadSampleBackup={() => {
             const sample = backups[0];
-            if (sample) downloadBackupJson(sample);
+            if (sample) {
+              void handleDownloadBackupWithTracking(sample, true);
+            }
           }}
         />
       )}
@@ -2386,25 +2539,45 @@ export default function App() {
             devices.find((d) => d.id === missingAppsSession.deviceId)?.installedPackages ?? []
           }
           initialView={missingAppsSession.initialView}
+          downloadPrefs={downloadPrefs}
+          lastSavedFile={recentSavedFiles[0] ?? null}
+          onChangeDownloadPrefs={handleUpdateDownloadPrefs}
+          onOpenSavedFile={openSavedFileViewer}
+          onOpenSavedFolder={() => openSavedFolderBrowser()}
           onMarkInstalled={(pkg) =>
             handleMarkPackageInstalled(pkg, missingAppsSession.deviceId)
           }
           onDownloadFile={(format) => {
-            downloadMissingAppsFile(
+            void handleDownloadMissingAppsWithTracking(
               missingAppsSession.targetDeviceName,
               missingAppsSession.backupName,
               missingAppsSession.missingApps,
-              format
+              format,
+              true
             );
-            pushFeedback({
-              severity: 'success',
-              title: `Downloaded Play Store install list (.${format})`,
-              message: `Saved ${missingAppsSession.missingApps.length} missing app link(s) for ${missingAppsSession.targetDeviceName}.`,
-            });
           }}
           onClose={() =>
             setMissingAppsSession((prev) => (prev ? { ...prev, modalOpen: false } : null))
           }
+        />
+      )}
+
+      {/* Saved File & Folder Viewer Modal */}
+      {savedViewerState.open && (
+        <SavedFileModal
+          initialTab={savedViewerState.initialTab}
+          activeFile={savedViewerState.activeFile}
+          recentFiles={recentSavedFiles}
+          prefs={downloadPrefs}
+          onChangePrefs={handleUpdateDownloadPrefs}
+          onSelectFile={(record) =>
+            setSavedViewerState((prev) => ({
+              ...prev,
+              activeFile: record,
+            }))
+          }
+          onFileSaved={(record) => registerSavedFile(record, false)}
+          onClose={() => setSavedViewerState((prev) => ({ ...prev, open: false }))}
         />
       )}
     </div>

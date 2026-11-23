@@ -16,6 +16,8 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Folder,
+  FolderOpen,
   Globe,
   PackageCheck,
   X,
@@ -23,6 +25,8 @@ import {
 import { MissingAppEntry } from '../types/layout';
 import { sanitizePlayStoreUrl } from '../utils/sanitize';
 import { AndroidIcon } from './AndroidIcon';
+import { DownloadLocationPreferences, SavedFileRecord } from '../services/downloadManager';
+import { DownloadLocationControl } from './DownloadLocationControl';
 
 interface MissingAppsModalProps {
   targetDeviceName: string;
@@ -30,6 +34,11 @@ interface MissingAppsModalProps {
   missingApps: MissingAppEntry[];
   installedPackages: string[];
   initialView?: 'walkthrough' | 'list';
+  downloadPrefs: DownloadLocationPreferences;
+  lastSavedFile: SavedFileRecord | null;
+  onChangeDownloadPrefs: (next: DownloadLocationPreferences) => void;
+  onOpenSavedFile: (file: SavedFileRecord) => void;
+  onOpenSavedFolder: () => void;
   onMarkInstalled: (packageName: string) => void;
   onDownloadFile: (format: 'txt' | 'html') => void;
   onClose: () => void;
@@ -41,6 +50,11 @@ export function MissingAppsModal({
   missingApps,
   installedPackages,
   initialView = 'walkthrough',
+  downloadPrefs,
+  lastSavedFile,
+  onChangeDownloadPrefs,
+  onOpenSavedFile,
+  onOpenSavedFolder,
   onMarkInstalled,
   onDownloadFile,
   onClose,
@@ -48,6 +62,7 @@ export function MissingAppsModal({
   const titleId = useId();
   const [viewMode, setViewMode] = useState<'walkthrough' | 'list'>(initialView);
   const [stepIndex, setStepIndex] = useState(0);
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -139,7 +154,24 @@ export function MissingAppsModal({
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowLocationPicker((v) => !v)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#374151] bg-[#F9FAFB] border border-[#E4E7EC] hover:border-[#166534] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Folder className="w-3.5 h-3.5 text-[#166534]" />
+                Save To:{' '}
+                <span className="font-semibold text-[#111827]">
+                  {downloadPrefs.mode === 'workspace-folder'
+                    ? downloadPrefs.workspaceFolder
+                    : downloadPrefs.mode === 'device-folder'
+                    ? downloadPrefs.deviceFolderName ?? 'Device Folder'
+                    : downloadPrefs.mode === 'ask-each-time'
+                    ? 'Ask Each Time'
+                    : 'Downloads'}
+                </span>
+              </button>
               <button
                 type="button"
                 onClick={() => onDownloadFile('txt')}
@@ -158,6 +190,52 @@ export function MissingAppsModal({
               </button>
             </div>
           </div>
+
+          {showLocationPicker && (
+            <DownloadLocationControl
+              prefs={downloadPrefs}
+              onChangePrefs={onChangeDownloadPrefs}
+              onOpenFolderBrowser={() => {
+                onClose();
+                onOpenSavedFolder();
+              }}
+              compact
+            />
+          )}
+
+          {lastSavedFile && (
+            <div className="p-3 rounded-xl bg-[#F0FDF4] border border-[#BBF7D0] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="min-w-0 text-xs text-[#14532D]">
+                <span className="font-semibold">Saved:</span>{' '}
+                <span className="font-mono">{lastSavedFile.filename}</span>{' '}
+                <span className="text-[#166534]">({lastSavedFile.locationLabel})</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenSavedFile(lastSavedFile);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-[#166534] hover:bg-[#14532D] rounded-lg cursor-pointer"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Open File
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenSavedFolder();
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#111827] bg-white border border-[#BBF7D0] hover:border-[#166534] rounded-lg cursor-pointer"
+                >
+                  <FolderOpen className="w-3 h-3" />
+                  Open Folder
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Step-by-Step Guided Walkthrough */}
           {viewMode === 'walkthrough' && currentApp && (

@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Download, FileCode2 } from 'lucide-react';
 import { ANDROID_COMPANION_FILES } from '../data/kotlinCompanion';
+import { SavedFileRecord, saveExportedFile } from '../services/downloadManager';
 
-export function CompanionView() {
+interface CompanionViewProps {
+  onFileSaved?: (record: SavedFileRecord) => void;
+}
+
+export function CompanionView({ onFileSaved }: CompanionViewProps) {
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<number | null>(null);
@@ -33,17 +38,15 @@ export function CompanionView() {
     }
   };
 
-  const handleDownloadFile = () => {
-    const blob = new Blob([activeFile.content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = activeFile.filename;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const handleDownloadFile = async () => {
+    const saved = await saveExportedFile({
+      filename: activeFile.filename,
+      content: activeFile.content,
+      mimeType: 'text/plain;charset=utf-8',
+    });
+    if (!saved.cancelled) {
+      onFileSaved?.(saved);
+    }
   };
 
   return (
