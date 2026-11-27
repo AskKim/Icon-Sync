@@ -218,7 +218,13 @@ class LauncherGridDetector(private val context: Context) {
 
     fun resetToAutoDetect() {
         val current = loadStoredConfig()
-        saveStoredConfig(current.copy(preferUserGrid = false))
+        saveStoredConfig(
+            current.copy(
+                preferUserGrid = false,
+                accCols = null,
+                accRows = null
+            )
+        )
     }
 
     fun saveAccessibilityDetectedGrid(cols: Int, rows: Int) {
@@ -252,16 +258,26 @@ class LauncherGridDetector(private val context: Context) {
         totalPages: Int? = null
     ) {
         val current = loadStoredConfig()
+        val allShortcuts = shortcuts + current.capturedPages.flatMap { it.shortcuts }
+        val allWidgets = widgets + current.capturedPages.flatMap { it.widgets }
         val observedMaxCols = maxOf(
-            (shortcuts.maxOfOrNull { it.col } ?: -1) + 1,
-            widgets.maxOfOrNull { it.col + it.spanX } ?: 0
+            (allShortcuts.maxOfOrNull { it.col } ?: -1) + 1,
+            allWidgets.maxOfOrNull { it.col + it.spanX } ?: 0
         )
         val observedMaxRows = maxOf(
-            (shortcuts.maxOfOrNull { it.row } ?: -1) + 1,
-            widgets.maxOfOrNull { it.row + it.spanY } ?: 0
+            (allShortcuts.maxOfOrNull { it.row } ?: -1) + 1,
+            allWidgets.maxOfOrNull { it.row + it.spanY } ?: 0
         )
-        val candidateCols = cols ?: current.accCols
-        val candidateRows = rows ?: current.accRows
+        val candidateCols = if (current.preferUserGrid && current.userCols != null) {
+            current.userCols
+        } else {
+            cols ?: current.userCols ?: current.accCols
+        }
+        val candidateRows = if (current.preferUserGrid && current.userRows != null) {
+            current.userRows
+        } else {
+            rows ?: current.userRows ?: current.accRows
+        }
         val boundedCols = candidateCols?.let { maxOf(it, observedMaxCols).coerceIn(3, 8) }
             ?: observedMaxCols.takeIf { it in 3..8 }
         val boundedRows = candidateRows?.let { maxOf(it, observedMaxRows).coerceIn(3, 8) }
@@ -632,7 +648,7 @@ class LauncherGridDetector(private val context: Context) {
 
     private fun defaultGridForLauncher(launcherPkg: String): Pair<Int, Int> {
         return when (launcherPkg) {
-            "com.sec.android.app.launcher" -> Pair(4, 5)
+            "com.sec.android.app.launcher" -> Pair(5, 6)
             "com.google.android.apps.nexuslauncher" -> Pair(4, 5)
             "com.teslacoilsw.launcher" -> Pair(5, 5)
             "app.lawnchair" -> Pair(5, 5)

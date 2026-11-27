@@ -17,9 +17,23 @@ class HomeScreenCaptureParserTest {
         assertEquals("Calendar", notif?.first)
         assertFalse(notif?.second ?: true)
 
+        val notifNoComma = HomeScreenCaptureParser.cleanShortcutLabel("Messages 1 notification")
+        assertEquals("Messages", notifNoComma?.first)
+        assertFalse(notifNoComma?.second ?: true)
+
         val folder = HomeScreenCaptureParser.cleanShortcutLabel("Google, Folder")
         assertEquals("Google", folder?.first)
         assertTrue(folder?.second ?: false)
+
+        val folderWithApps = HomeScreenCaptureParser.cleanShortcutLabel("Google, 7 apps")
+        assertEquals("Google", folderWithApps?.first)
+        assertTrue(folderWithApps?.second ?: false)
+
+        val searchLabel = HomeScreenCaptureParser.cleanShortcutLabel("Google Search")
+        assertEquals("Google Search", searchLabel?.first)
+
+        val searchPill = HomeScreenCaptureParser.cleanShortcutLabel("Search")
+        assertEquals("Search", searchPill?.first)
 
         assertNull(HomeScreenCaptureParser.cleanShortcutLabel("1"))
         assertNull(HomeScreenCaptureParser.cleanShortcutLabel("Search apps"))

@@ -40,11 +40,11 @@ data class ParsedHomeCapture(
 object HomeScreenCaptureParser {
 
     private val NOTIFICATION_SUFFIX_REGEX = Regex(
-        pattern = ",\\s*\\d+\\s+(?:notifications?|missed\\s+calls?|unread.*|new\\s+items?)\\b.*$",
+        pattern = "(?:,\\s*|\\s+)\\d+\\s+(?:notifications?|missed\\s+calls?|unread.*|new\\s+items?)\\b.*$",
         option = RegexOption.IGNORE_CASE
     )
     private val FOLDER_SUFFIX_REGEX = Regex(
-        pattern = ",\\s*folder\\b.*$",
+        pattern = "(?:,\\s*|\\s+)folder\\b.*$",
         option = RegexOption.IGNORE_CASE
     )
     private val FOLDER_PREFIX_REGEX = Regex(
@@ -52,7 +52,7 @@ object HomeScreenCaptureParser {
         option = RegexOption.IGNORE_CASE
     )
     private val FOLDER_COUNT_SUFFIX_REGEX = Regex(
-        pattern = ",\\s*\\d+\\s+(?:apps?|items?)\\b.*$",
+        pattern = "(?:,\\s*|\\s+)\\d+\\s+(?:apps?|items?)\\b.*$",
         option = RegexOption.IGNORE_CASE
     )
     private val ACTION_HINT_SUFFIX_REGEX = Regex(
@@ -66,7 +66,6 @@ object HomeScreenCaptureParser {
     private val PURE_NUMBER_REGEX = Regex("^\\d+$")
 
     private val IGNORED_CHROME_LABELS = setOf(
-        "search",
         "search apps",
         "close all",
         "clear all",
@@ -96,7 +95,8 @@ object HomeScreenCaptureParser {
         if (PAGE_INDICATOR_REGEX.matches(firstLine)) return null
 
         val isFolder = FOLDER_SUFFIX_REGEX.containsMatchIn(firstLine) ||
-            FOLDER_PREFIX_REGEX.containsMatchIn(firstLine)
+            FOLDER_PREFIX_REGEX.containsMatchIn(firstLine) ||
+            FOLDER_COUNT_SUFFIX_REGEX.containsMatchIn(firstLine)
         val cleaned = firstLine
             .replace(FOLDER_PREFIX_REGEX, "")
             .replace(FOLDER_SUFFIX_REGEX, "")

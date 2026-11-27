@@ -258,14 +258,20 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         val nowInHotseat = inHotseat || "hotseat" in viewIdLower || "dock" in viewIdLower
         val centerOnScreen = rect.centerX() in 0 until screenWidth && rect.centerY() in 0 until screenHeight
 
-        // Capture AppWidgetHostView widgets as block footprints without descending into their internal controls
-        if (!nowInHotseat && isWidgetContainer(classNameLower, viewIdLower)) {
+        val isWorkspaceContainer = LAUNCHER_WORKSPACE_CONTAINER_TOKENS.any { it in classNameLower || it in viewIdLower }
+        val isMultiCellFootprint = (rect.width() > maxCellW || rect.height() > maxCellH) &&
+            !isWorkspaceContainer &&
+            rect.width() <= (screenWidth * 0.98f).roundToInt() &&
+            rect.height() <= (screenHeight * 0.78f).roundToInt()
+
+        // Capture widgets as block footprints without descending into their internal controls
+        if (!nowInHotseat && (isWidgetContainer(node, classNameLower, viewIdLower) || isMultiCellFootprint)) {
             if (centerOnScreen &&
                 rect.width() >= minCellPx &&
                 rect.height() >= minCellPx &&
                 rect.height() <= (screenHeight * 0.78f).roundToInt()
             ) {
-                val widgetTitle = extractWidgetTitle(node)
+                val widgetTitle = extractWidgetTitle(node, classNameLower, viewIdLower)
                 widgetOut += ObservedBoundsNode(
                     label = widgetTitle,
                     left = rect.left.coerceAtLeast(0),
@@ -350,9 +356,44 @@ class LauncherGridAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isWidgetContainer(classNameLower: String, viewIdLower: String): Boolean {
+    private fun isWidgetContainer(
+        node: AccessibilityNodeInfo,
+        classNameLower: String,
+        viewIdLower: String
+    ): Boolean {
         if ("appwidgethostview" in classNameLower || "widgethostview" in classNameLower) return true
-        return viewIdLower.endsWith("widget_host_view") || viewIdLower.endsWith("appwidget_container")
+        if ("smartwidget" in classNameLower || "smart_widget" in classNameLower) return true
+        if ("widgetcell" in classNameLower || "widgetview" in classNameLower) return true
+        if ("searchwidgetprovider" in classNameLower || "qsbwidget" in classNameLower) return true
+
+        val widgetIdTokens = listOf(
+            "widget_host_view",
+            "appwidget_container",
+            "widget_container",
+            "widget_cell",
+            "widget_view",
+            "appwidget_view",
+            "smart_widget",
+            "stacked_widget",
+            "custom_widget",
+            "weather_widget",
+            "clock_widget",
+            "qsb_widget",
+            "search_widget",
+            "qsb_container",
+            "search_container",
+            "gsearch",
+            "search_plate",
+            "searchbox"
+        )
+        if (widgetIdTokens.any { it in viewIdLower }) return true
+
+        val pkg = node.packageName?.toString()?.lowercase().orEmpty()
+        if (pkg == "com.google.android.googlequicksearchbox") {
+            return true
+        }
+
+        return false
     }
 
     private fun isShortcutContainer(
@@ -368,11 +409,40 @@ class LauncherGridAccessibilityService : AccessibilityService() {
             "folder_icon" in viewIdLower
     }
 
-    private fun extractWidgetTitle(node: AccessibilityNodeInfo): String {
-        val desc = HomeScreenCaptureParser.cleanShortcutLabel(node.contentDescription?.toString())?.first
-        if (!desc.isNullOrBlank()) return desc.take(40)
+    private fun extractWidgetTitle(
+        node: AccessibilityNodeInfo,
+        classNameLower: String = "",
+        viewIdLower: String = ""
+    ): String {
+        val pkg = node.packageName?.toString()?.lowercase().orEmpty()
+        if (pkg == "com.google.android.googlequicksearchbox" ||
+            "qsb" in viewIdLower ||
+            "search_widget" in viewIdLower ||
+            "search_container" in viewIdLower
+        ) {
+            return "Google Search"
+        }
+        val ownDesc = node.contentDescription?.toString()?.trim()
+        if (!ownDesc.isNullOrBlank()) {
+            if (ownDesc.equals("search", ignoreCase = true) || ownDesc.equals("google search", ignoreCase = true)) {
+                return "Google Search"
+            }
+            HomeScreenCaptureParser.cleanShortcutLabel(ownDesc)?.first?.let { return it.take(40) }
+        }
+        val ownText = node.text?.toString()?.trim()
+        if (!ownText.isNullOrBlank()) {
+            if (ownText.equals("search", ignoreCase = true) || ownText.equals("google search", ignoreCase = true)) {
+                return "Google Search"
+            }
+            HomeScreenCaptureParser.cleanShortcutLabel(ownText)?.first?.let { return it.take(40) }
+        }
         val childLabel = findFirstWidgetText(node, maxDepth = 4)
-        return childLabel?.take(40) ?: "App Widget"
+        if (!childLabel.isNullOrBlank()) return childLabel.take(40)
+        if (pkg.isNotBlank() && !pkg.contains("launcher") && !pkg.contains("android.app")) {
+            val appName = pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+            return "$appName Widget"
+        }
+        return "App Widget"
     }
 
     private fun findFirstWidgetText(node: AccessibilityNodeInfo, maxDepth: Int): String? {
@@ -440,6 +510,19 @@ class LauncherGridAccessibilityService : AccessibilityService() {
             "apps_view",
             "apps_tray",
             "apps_picker"
+        )
+
+        private val LAUNCHER_WORKSPACE_CONTAINER_TOKENS = listOf(
+            "workspace",
+            "celllayout",
+            "cell_layout",
+            "draglayer",
+            "drag_layer",
+            "pagedview",
+            "paged_view",
+            "viewpager",
+            "page_carousel",
+            "homescreen"
         )
 
         fun isEnabled(context: Context): Boolean {
